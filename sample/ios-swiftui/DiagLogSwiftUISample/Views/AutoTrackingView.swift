@@ -1,0 +1,121 @@
+import SwiftUI
+import AppDiagLog
+
+struct AutoTrackingView: View {
+    @State private var showDetail = false
+    @State private var networkStatus = "Idle"
+    @State private var actionLog = ["Screen tracking starts when this tab appears."]
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("Navigation") {
+                    Button {
+                        showDetail = true
+                        appendAction("Navigating to detail view.")
+                    } label: {
+                        Label("Navigate to Detail", systemImage: "arrow.right.circle")
+                    }
+
+                    Text("Both this screen and the destination use .trackScreen(_:) so screen views are logged automatically.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+
+                Section("Network") {
+                    Button {
+                        Task {
+                            await makeNetworkRequest()
+                        }
+                    } label: {
+                        Label("Make Network Request", systemImage: "network")
+                    }
+
+                    Text(networkStatus)
+                        .font(.footnote.monospaced())
+                        .foregroundStyle(.secondary)
+                }
+
+                Section("System Auto-Tracking") {
+                    Label("Connectivity changes are tracked automatically while the app runs.", systemImage: "wifi")
+                        .font(.footnote)
+                    Label("App lifecycle events (foreground/background) are logged automatically.", systemImage: "app.badge.checkmark")
+                        .font(.footnote)
+                    Label("Every tap on this screen is captured by the SDK's TapTracker.", systemImage: "hand.tap")
+                        .font(.footnote)
+                    Label("Use Xcode > Debug > Simulate Memory Warning to exercise memory-pressure tracking.", systemImage: "memorychip")
+                        .font(.footnote)
+                    Label("Battery level/state and thermal state changes are tracked automatically via BatteryTracker.", systemImage: "battery.75percent")
+                        .font(.footnote)
+                    Label("Open the app with a deep link to see .trackDeepLinks() in action.", systemImage: "link")
+                        .font(.footnote)
+                    Label("Crash simulation and session inspection are on the Session tab.", systemImage: "internaldrive")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+
+                Section("Recent Actions") {
+                    ForEach(Array(actionLog.enumerated()), id: \.offset) { _, action in
+                        Text(action)
+                            .font(.footnote.monospaced())
+                    }
+                }
+            }
+            .navigationTitle("Trackers")
+            .navigationDestination(isPresented: $showDetail) {
+                AutoTrackingDetailView()
+            }
+        }
+        .trackScreen("AutoTrackingView")
+        .trackDeepLinks()
+    }
+
+    private func makeNetworkRequest() async {
+        networkStatus = "Requesting httpbin.org/get…"
+        appendAction("Starting demo GET request.")
+
+        guard let url = URL(string: "https://httpbin.org/get?source=appdiaglog-swiftui") else {
+            networkStatus = "Invalid request URL."
+            appendAction("Request aborted because the URL was invalid.")
+            return
+        }
+
+        do {
+            let (data, response) = try await URLSession.shared.data(from: url)
+            let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
+            let preview = String(data: data.prefix(120), encoding: .utf8) ?? "<binary>"
+            networkStatus = "HTTP \(statusCode): \(preview)"
+            appendAction("Finished demo GET request with HTTP \(statusCode).")
+        } catch {
+            networkStatus = "Request failed: \(error.localizedDescription)"
+            appendAction("Demo GET request failed: \(error.localizedDescription)")
+        }
+    }
+
+    private func appendAction(_ message: String) {
+        actionLog.insert("\(timestamp())  \(message)", at: 0)
+        actionLog = Array(actionLog.prefix(12))
+    }
+
+    private func timestamp() -> String {
+        Date.now.formatted(date: .omitted, time: .standard)
+    }
+}
+
+private struct AutoTrackingDetailView: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Detail View")
+                .font(.largeTitle.bold())
+
+            Text("Push into this page to generate another screen-view event. Tap around, navigate back, or trigger export from another tab to inspect the session later.")
+                .foregroundStyle(.secondary)
+
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .padding()
+        .navigationTitle("Detail View")
+        .trackScreen("DetailView")
+    }
+}
