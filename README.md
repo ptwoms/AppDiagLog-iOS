@@ -60,16 +60,45 @@ half can decrypt. The device never sees the private key.
 | Directory               | What's there                                                            |
 | ----------------------- | ----------------------------------------------------------------------- |
 | `ios/`                  | Swift Package. full auto-tracking, unit tests, actor-based concurrency. |
+| `backend/`              | Spring Boot service. Ingest + decrypt + query API + round-trip test.  |
 | `sample/ios-app/`       | Minimal SwiftUI app driving the SDK end-to-end.                       |
+
 ---
 
 ## Quick start
 
 ### 1. Generate a keypair
 
+Using the backend's bundled helper (any JVM with BouncyCastle on the
+classpath):
+
+```kotlin
+val (pub, priv) = com.appdiaglog.server.vault.InMemoryKeyVault.generateKeyPair()
+println("public: "  + java.util.Base64.getEncoder().encodeToString(pub))
+println("private: " + java.util.Base64.getEncoder().encodeToString(priv))
+```
+
+Keep the public half for the app; keep the private half for the backend
+vault. **Never** ship the private key with an app.
+
+(OR)
+
 Use Python or go scripts under scripts folder
 
-### 2. Integrate the iOS SDK
+### 2. Run the backend
+
+```bash
+cd backend
+gradle wrapper --gradle-version 9.5   # one-off, see backend/README.md
+export DIAGNOSTICLOG_INGEST_TOKEN="<random token>"
+export DIAGNOSTICLOG_VAULT_KEYS="key-2026-04=<PRIVATE_KEY_BASE64>"
+./gradlew bootRun --args='--spring.profiles.active=dev'
+```
+
+The service listens on `:8080`, uses in-memory H2 in dev, and exposes
+`/actuator/health` plus the API surface under `/api/v1/diagnostics/*`.
+
+### 3. Integrate the iOS SDK
 
 Add the local package (or pin a tag once you publish one):
 
@@ -95,9 +124,27 @@ AppDiagLog.error("checkout_failure", ["code": "402"])
 let result = await AppDiagLog.export()
 ```
 
-Annotate SwiftUI views with `.trackScreen("Cart")` and
-`.trackDeepLinks()` to get screen-view / deep-link tracking without
+Annotate SwiftUI views with `.diagnosticScreen("Cart")` and
+`.diagnosticDeepLinks()` to get screen-view / deep-link tracking without
 swizzling.
+
+### 4. Upload & query
+
+```bash
+curl -X POST http://localhost:8080/api/v1/diagnostics/upload \
+  -H "Authorization: Bearer $DIAGNOSTICLOG_INGEST_TOKEN" \
+  -F "file=@/path/to/appdiaglog_export_*.zip"
+
+curl "http://localhost:8080/api/v1/diagnostics/sessions?size=20"
+curl "http://localhost:8080/api/v1/diagnostics/sessions/<id>/events?level=error"
+
+# Stream a single session as CSV (works with all storage adapters):
+curl "http://localhost:8080/api/v1/diagnostics/sessions/<id>/events.csv" > events.csv
+
+# Download xls
+curl -o events.xls "http://localhost:8080/api/v1/diagnostics/sessions/events.xls"
+
+```
 
 ---
 
@@ -106,6 +153,9 @@ swizzling.
 The SDK hands back a ZIP and stays out of your transport — the host app picks
 how to deliver it. Two flows are supported end to end:
 
+### HTTP upload
+Sample code: `sample/ios-app/.../AppDiagLogAPIClient.swift`. POST the ZIP as `multipart/form-data`
+to `POST /api/v1/diagnostics/upload`. Backend decrypts in-process.
 
 ### Email + offline decrypt
 Sample helpers: `sample/ios-app/.../EmailExportHelper.swift`
@@ -121,6 +171,30 @@ just as decryptable as the default `ML-KEM-768` + `AES-256-GCM`.
 
 ---
 
+## Backend storage adapters
+
+Pick at boot via `appdiaglog.storage.adapter`:
+
+| Value    | Where data lives                          | Use case |
+|----------|-------------------------------------------|----------|
+| `jpa`    | Postgres / H2 via Spring Data (default)   | Production / shared dashboards |
+| `sqlite` | Local SQLite file, **per-row AES-256-GCM**| Single-host deployments, air-gapped |
+| `csv`    | Append-only `sessions.csv` + `events.csv` | Offline analysis, spreadsheet hand-off |
+
+```yaml
+appdiaglog:
+  storage:
+    adapter: sqlite
+    sqlite:
+      file: /var/appdiaglog/sessions.db
+      master-key: <base64 32-byte AES key>   # encrypts sensitive columns
+```
+
+The ingest pipeline and query API are unchanged regardless of adapter — the
+choice only affects where rows land.
+
+---
+
 ## Key design decisions
 
 | Decision                                                  | Rationale                                                                                                                                                                                |
@@ -132,6 +206,7 @@ just as decryptable as the default `ML-KEM-768` + `AES-256-GCM`.
 | **`<100 KB` steady-state memory budget**                  | 50-event buffer + reserved capacity + shared encoders. The SDK is a utility; it must not compete with the host app.                                                                      |
 | **No GCD on iOS (structured concurrency only)**           | One exception documented in code: `NWPathMonitor` and the crash-handler bridge use a queue/semaphore because the C API requires it.                                                      |
 | **Swift actors for everything mutable**                   | `EventBuffer`, `SessionManager`, `LogPipeline`, `FlushCoordinator`, `ExportManager` — all actor-isolated. The public API is `nonisolated` and returns immediately.                        |
+| **Idempotent re-upload** (backend)                        | Sessions are keyed by the device-generated ID. Re-uploading the same export overwrites cleanly — a retry after a flaky network doesn't create duplicates.                                |
 | **One-bad-session-doesn't-fail-whole-upload**             | Each session is decrypted in its own transaction. A missing key or bad AEAD tag is recorded in `failures[]` and returned to the client so support can chase the problem.                 |
 
 ---
@@ -141,7 +216,7 @@ just as decryptable as the default `ML-KEM-768` + `AES-256-GCM`.
 | Layer             | Tests                                                                                                              |
 | ----------------- | ------------------------------------------------------------------------------------------------------------------ |
 | iOS SDK           | XCTest in `ios/Tests/AppDiagLogTests/`: crypto round-trip, redaction, eviction, buffer/rate-limiter, envelope.     |
-| Backend           | WIP   |
+| Backend           | Spring integration test `DecryptionRoundtripTest` that builds an envelope with BC, ingests it, and asserts rows.   |
 | Sample apps       | Manual QA drivers — exercise the SDK end-to-end against a running backend.                                         |
 
 ---
@@ -166,6 +241,8 @@ just as decryptable as the default `ML-KEM-768` + `AES-256-GCM`.
 
 - The SDK does **not** transport logs itself. The host app picks a channel
   (support ticket, S3 signed upload, etc.).
+- No backend dashboard ships with this repo. The REST API is the contract;
+  build whatever UI your org prefers on top.
 - ML-KEM-768 on iOS requires iOS 26+ (native CryptoKit) **or** a liboqs
   XCFramework injected via `PQCProvider`. The bundled `SystemPQCProvider`
   fails fast on older runtimes — fail secure rather than fall back to a

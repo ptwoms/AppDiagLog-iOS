@@ -32,7 +32,7 @@ enum SampleConfiguration {
     static let sampleMcpServerPort: UInt16 = 7321
     static let sampleMcpServerBindAddress = "127.0.0.1"
 
-    static let keyWrap: AsymmetricKey = .mlKem768(keyId: sampleKeyID, publicKey: keyBytes) //.rsaOaep3072(keyId: sampleKeyID, publicKey: keyBytes)
+    static let keyWrap: AsymmetricKey = .rsaOaep3072(keyId: sampleKeyID, publicKey: keyBytes)
     static let symmetric: SymmetricAlgorithm = .aes256gcm
 
     static let autoTrack = AutoTrackConfig(

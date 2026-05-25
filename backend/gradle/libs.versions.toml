@@ -1,0 +1,31 @@
+[versions]
+springBoot                = "3.5.0"
+springDependencyManagement = "1.1.7"
+kotlin                    = "2.1.21"
+bouncycastle              = "1.84"
+sqliteJdbc                = "3.49.1.0"
+commonsCsv                = "1.13.0"
+apachePoi                 = "5.4.1"
+
+[libraries]
+spring-boot-starter-web        = { module = "org.springframework.boot:spring-boot-starter-web" }
+spring-boot-starter-validation = { module = "org.springframework.boot:spring-boot-starter-validation" }
+spring-boot-starter-data-jpa   = { module = "org.springframework.boot:spring-boot-starter-data-jpa" }
+spring-boot-starter-actuator   = { module = "org.springframework.boot:spring-boot-starter-actuator" }
+spring-boot-starter-test       = { module = "org.springframework.boot:spring-boot-starter-test" }
+kotlin-reflect                 = { module = "org.jetbrains.kotlin:kotlin-reflect" }
+jackson-module-kotlin          = { module = "com.fasterxml.jackson.module:jackson-module-kotlin" }
+bouncycastle-provider          = { module = "org.bouncycastle:bcprov-jdk18on",  version.ref = "bouncycastle" }
+bouncycastle-pkix              = { module = "org.bouncycastle:bcpkix-jdk18on",  version.ref = "bouncycastle" }
+h2                             = { module = "com.h2database:h2" }
+postgresql                     = { module = "org.postgresql:postgresql" }
+sqlite-jdbc                    = { module = "org.xerial:sqlite-jdbc",            version.ref = "sqliteJdbc" }
+commons-csv                    = { module = "org.apache.commons:commons-csv",    version.ref = "commonsCsv" }
+apache-poi                     = { module = "org.apache.poi:poi",                version.ref = "apachePoi" }
+
+[plugins]
+spring-boot                = { id = "org.springframework.boot",            version.ref = "springBoot" }
+spring-dependency-management = { id = "io.spring.dependency-management",  version.ref = "springDependencyManagement" }
+kotlin-jvm                 = { id = "org.jetbrains.kotlin.jvm",            version.ref = "kotlin" }
+kotlin-spring              = { id = "org.jetbrains.kotlin.plugin.spring",  version.ref = "kotlin" }
+kotlin-jpa                 = { id = "org.jetbrains.kotlin.plugin.jpa",     version.ref = "kotlin" }

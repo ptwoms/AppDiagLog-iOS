@@ -81,7 +81,7 @@ enum SampleConfiguration {
             maxEventsPerSecond: maxEventsPerSecond,
             // RSA keeps this sample runnable on iOS 16+ without an extra PQC provider.
             // Swap to `.mlKem768(...)` with a real key when you are ready to test PQC.
-            keyWrap: .mlKem768(keyId: sampleKeyID, publicKey: keyBytes), //.rsaOaep3072(keyId: sampleKeyID, publicKey: keyBytes),
+            keyWrap: .rsaOaep3072(keyId: sampleKeyID, publicKey: keyBytes),
             symmetric: .aes256gcm,
             autoTrack: autoTrack,
             debugLogging: true,

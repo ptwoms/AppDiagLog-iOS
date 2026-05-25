@@ -1,0 +1,98 @@
+spring:
+  application:
+    name: appdiaglog-backend
+  servlet:
+    multipart:
+      # Diagnostic exports are bounded by the SDK's max-disk-usage (default 10MB)
+      # plus envelope overhead. 50MB cap protects the ingest endpoint.
+      max-file-size: 50MB
+      max-request-size: 50MB
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: update
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+
+server:
+  port: 8080
+  forward-headers-strategy: framework
+
+management:
+  endpoints:
+    web:
+      exposure:
+        # /actuator/health is the only publicly useful endpoint.
+        include: health
+  endpoint:
+    health:
+      show-details: never
+
+appdiaglog:
+  # Token required on the upload endpoint. Override via env var
+  # DIAGNOSTICLOG_INGEST_TOKEN in production. The dev default is intentionally
+  # weak so engineers know it's a placeholder.
+  ingest-token: ${DIAGNOSTICLOG_INGEST_TOKEN:dev-only-replace-me}
+  vault:
+    # Comma-separated keyId=base64PrivateKey pairs loaded into the in-memory
+    # vault at boot. Format matches what KeyVaultLoader parses.
+    inline-keys: ${DIAGNOSTICLOG_VAULT_KEYS:}
+  storage:
+    # Which SessionStore to use. One of: jpa | sqlite | csv. Default 'jpa' keeps
+    # existing Postgres/H2 deployments working without further changes.
+    adapter: ${DIAGNOSTICLOG_STORAGE_ADAPTER:jpa}
+    sqlite:
+      # Path to the SQLite file. Created on first boot if missing.
+      file: ${DIAGNOSTICLOG_SQLITE_FILE:./appdiaglog.db}
+      # Base64-encoded 32-byte master key for the application-layer row encryption.
+      # Generate one with: head -c 32 /dev/urandom | base64
+      master-key: ${DIAGNOSTICLOG_SQLITE_MASTER_KEY:}
+    csv:
+      # Directory under which sessions.csv and events.csv are written. Created
+      # on first boot if missing.
+      dir: ${DIAGNOSTICLOG_CSV_DIR:./appdiaglog-csv}
+
+logging:
+  level:
+    root: INFO
+    com.appdiaglog: DEBUG
+
+kind: Application
+
+---
+# Dev profile: H2 in-memory, console enabled.
+spring:
+  config:
+    activate:
+      on-profile: dev
+  datasource:
+    url: jdbc:h2:mem:appdiaglog;MODE=PostgreSQL;DB_CLOSE_DELAY=-1
+    username: sa
+    password:
+    driver-class-name: org.h2.Driver
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+
+kind: Application
+
+---
+# Prod profile: Postgres via standard Spring datasource env vars.
+spring:
+  config:
+    activate:
+      on-profile: prod
+  datasource:
+    url: ${DB_URL}
+    username: ${DB_USER}
+    password: ${DB_PASSWORD}
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+
+kind: Application
