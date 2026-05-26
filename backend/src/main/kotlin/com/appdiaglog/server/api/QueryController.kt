@@ -172,10 +172,7 @@ class QueryController(
                 )
 
                 var sessionRowIndex = 1
-                var eventSheetIndex = 1
-                var eventsSheet = workbook.createSheet("Events $eventSheetIndex")
-                writeEventHeader(eventsSheet.createRow(0), headerStyle)
-                var eventRowIndex = 1
+                val eventRows = mutableListOf<EventXlsRow>()
 
                 forEachSession { session ->
                     writeRow(
@@ -203,28 +200,52 @@ class QueryController(
                             page = PageRequest.of(eventPageIndex, EVENTS_PAGE_SIZE),
                         )
                         for (event in page.content) {
-                            if (eventRowIndex >= XLS_MAX_ROWS) {
-                                eventSheetIndex++
-                                eventsSheet = workbook.createSheet("Events $eventSheetIndex")
-                                writeEventHeader(eventsSheet.createRow(0), headerStyle)
-                                eventRowIndex = 1
-                            }
-                            writeRow(
-                                eventsSheet.createRow(eventRowIndex++),
-                                listOf(
-                                    event.sessionId,
-                                    event.seq.toString(),
-                                    event.ts,
-                                    event.level,
-                                    event.event,
-                                    event.screen ?: "",
-                                    mapper.writeValueAsString(event.props),
-                                ),
+                            eventRows += EventXlsRow(
+                                sessionId = event.sessionId,
+                                sessionCreatedAt = session.createdAt,
+                                seq = event.seq,
+                                ts = event.ts,
+                                level = event.level,
+                                event = event.event,
+                                screen = event.screen ?: "",
+                                props = mapper.writeValueAsString(event.props),
                             )
                         }
                         if (!page.hasNext()) break
                         eventPageIndex++
                     }
+                }
+
+                var eventSheetIndex = 1
+                var eventsSheet = workbook.createSheet("Events $eventSheetIndex")
+                writeEventHeader(eventsSheet.createRow(0), headerStyle)
+                var eventRowIndex = 1
+
+                val sortedEventRows = eventRows.sortedWith(
+                    compareBy<EventXlsRow> { it.sessionCreatedAt }
+                        .thenBy { it.sessionId }
+                        .thenBy { displaySeq(it.seq) }
+                        .thenBy { it.ts },
+                )
+                for ((index, event) in sortedEventRows.withIndex()) {
+                    if (eventRowIndex >= XLS_MAX_ROWS) {
+                        eventSheetIndex++
+                        eventsSheet = workbook.createSheet("Events $eventSheetIndex")
+                        writeEventHeader(eventsSheet.createRow(0), headerStyle)
+                        eventRowIndex = 1
+                    }
+                    writeRow(
+                        eventsSheet.createRow(eventRowIndex++),
+                        listOf(
+                            event.sessionId,
+                            (index + 1).toString(),
+                            event.ts,
+                            event.level,
+                            event.event,
+                            event.screen,
+                            event.props,
+                        ),
+                    )
                 }
 
                 workbook.write(os)
@@ -324,6 +345,20 @@ class QueryController(
         val level: String,
         val props: Map<String, String>,
     )
+
+    private data class EventXlsRow(
+        val sessionId: String,
+        val sessionCreatedAt: String,
+        val seq: Long,
+        val ts: String,
+        val level: String,
+        val event: String,
+        val screen: String,
+        val props: String,
+    )
+
+    private fun displaySeq(seq: Long): Long =
+        if (seq < 0) Long.MAX_VALUE else seq
 
     companion object {
         private const val SESSIONS_PAGE_SIZE = 200

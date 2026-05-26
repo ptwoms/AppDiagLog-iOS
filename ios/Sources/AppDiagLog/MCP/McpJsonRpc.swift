@@ -10,7 +10,7 @@ let mcpProtocolVersion = "2024-11-05"
 /// A JSON-RPC 2.0 request or notification. `id` is `nil` for notifications.
 struct JsonRpcRequest: Codable, Sendable {
     var jsonrpc: String = mcpJsonRpcVersion
-    var id: Int?
+    var id: JsonRpcID?
     var method: String
     var params: AnyJSON?
 
@@ -21,9 +21,51 @@ struct JsonRpcRequest: Codable, Sendable {
 
 struct JsonRpcResponse: Codable, Sendable {
     var jsonrpc: String = mcpJsonRpcVersion
-    var id: Int?
+    var id: JsonRpcID?
     var result: AnyJSON?
     var error: JsonRpcError?
+}
+
+/// JSON-RPC allows request ids to be strings, numbers, or null. Some MCP clients
+/// use string ids, so keep the id type flexible and echo it back unchanged.
+enum JsonRpcID: Codable, Equatable, ExpressibleByIntegerLiteral, ExpressibleByStringLiteral, Sendable {
+    case int(Int)
+    case string(String)
+
+    init(integerLiteral value: Int) {
+        self = .int(value)
+    }
+
+    init(stringLiteral value: String) {
+        self = .string(value)
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.singleValueContainer()
+        if let i = try? c.decode(Int.self) {
+            self = .int(i)
+        } else if let s = try? c.decode(String.self) {
+            self = .string(s)
+        } else {
+            throw DecodingError.typeMismatch(
+                JsonRpcID.self,
+                DecodingError.Context(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "JSON-RPC id must be a string or integer"
+                )
+            )
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.singleValueContainer()
+        switch self {
+        case .int(let value):
+            try c.encode(value)
+        case .string(let value):
+            try c.encode(value)
+        }
+    }
 }
 
 struct JsonRpcError: Codable, Sendable {
@@ -124,7 +166,7 @@ struct AnyJSON: Codable, @unchecked Sendable {
     let value: Any?
 
     init(_ value: Any?) {
-        self.value = value
+        self.value = AnyJSON.normalize(value)
     }
 
     init(from decoder: Decoder) throws {
@@ -172,6 +214,39 @@ struct AnyJSON: Codable, @unchecked Sendable {
 
     var stringValue: String? { value as? String }
     var dictValue: [String: AnyJSON]? { value as? [String: AnyJSON] }
+
+    private static func normalize(_ value: Any?) -> Any? {
+        switch value {
+        case nil, is NSNull:
+            return nil
+        case let json as AnyJSON:
+            return json.value
+        case let dict as [String: AnyJSON]:
+            return dict
+        case let dict as [String: Any]:
+            return dict.mapValues { AnyJSON($0) }
+        case let array as [AnyJSON]:
+            return array
+        case let array as [Any]:
+            return array.map { AnyJSON($0) }
+        case let bool as Bool:
+            return bool
+        case let number as NSNumber:
+            if CFGetTypeID(number) == CFBooleanGetTypeID() {
+                return number.boolValue
+            }
+            let double = number.doubleValue
+            return double.rounded(.towardZero) == double ? number.intValue : double
+        case let string as String:
+            return string
+        case let int as Int:
+            return int
+        case let double as Double:
+            return double
+        default:
+            return nil
+        }
+    }
 }
 
 // MARK: - Encoding helpers

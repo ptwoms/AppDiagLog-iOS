@@ -66,7 +66,10 @@ func DecryptEnvelope(env envelope.Envelope, keys map[string][]byte) ([]envelope.
 // Returns nil for sessions that have zero events and a clean seal — those are
 // trivially empty and callers should skip them.
 //
-// Boundary events use Seq = -1 so they are identifiable programmatically.
+// Boundary events get reserved sequence positions around SDK events:
+// session_start uses Seq=0, while session_end uses max(raw Seq)+1. SDK events
+// start at Seq=1, so read paths can sort by Seq without pushing boundaries
+// together at the end of the session.
 // Abnormal terminations (force-kill, OOM, watchdog, debugger-intercepted crash)
 // are surfaced via session_end level=warning + props["sealed"]="false".
 func withBoundaries(env envelope.Envelope, events []envelope.Event) []envelope.Event {
@@ -86,7 +89,7 @@ func withBoundaries(env envelope.Envelope, events []envelope.Event) []envelope.E
 		startProps["session_tag"] = *env.SessionTag
 	}
 	start := envelope.Event{
-		Seq:   -1,
+		Seq:   0,
 		Ts:    env.CreatedAt,
 		Event: "session_start",
 		Level: "info",
@@ -102,11 +105,17 @@ func withBoundaries(env envelope.Envelope, events []envelope.Event) []envelope.E
 	}
 
 	endProps := map[string]string{"event_count": strconv.Itoa(len(events))}
+	endSeq := int64(1)
+	for _, e := range events {
+		if e.Seq >= endSeq {
+			endSeq = e.Seq + 1
+		}
+	}
 	var tail []envelope.Event
 
 	if hasCleanSeal {
 		tail = []envelope.Event{{
-			Seq:   -1,
+			Seq:   endSeq,
 			Ts:    *env.SealedAt,
 			Event: "session_end",
 			Level: "info",
@@ -115,7 +124,7 @@ func withBoundaries(env envelope.Envelope, events []envelope.Event) []envelope.E
 	} else {
 		endProps["sealed"] = "false"
 		tail = []envelope.Event{{
-			Seq:   -1,
+			Seq:   endSeq,
 			Ts:    endTs,
 			Event: "session_end",
 			Level: "warning",

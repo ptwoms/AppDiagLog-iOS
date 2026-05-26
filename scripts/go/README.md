@@ -63,8 +63,8 @@ The tool also prints a ready-to-paste SDK init snippet for iOS (Swift).
 |--------|--------|-------------|
 | `jsonl` (default) | `out/<session_id>.jsonl` | One file per session; events one-per-line as JSON objects. |
 | `csv` | `out/sessions.csv` + `out/events.csv` | Two flat CSV files. |
-| `combined` | `out/combined.jsonl` | Single JSONL with **all** events from all sessions, sorted by timestamp. Each event has an injected `session_id` field. |
-| `xls` | `out/export.xlsx` | Excel workbook with a **Sessions** sheet and an **Events** sheet. Events sorted by timestamp. |
+| `combined` | `out/combined.jsonl` | Single JSONL with **all** events from all sessions, ordered by session creation time + SDK per-session sequence. Each event has an injected `session_id` field and a continuous combined `seq`. |
+| `xls` | `out/export.xlsx` | Excel workbook with a **Sessions** sheet and an **Events** sheet. Events use a continuous combined `seq`. |
 
 ### keys.json format
 

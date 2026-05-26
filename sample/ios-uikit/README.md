@@ -33,8 +33,10 @@ sample/ios-uikit/
 
 - Replace `REPLACE_WITH_YOUR_BASE64_PUBLIC_KEY` in `AppDelegate.swift` with a real backend-registered public key.
 - The sample defaults to `.rsaOaep3072(...)` so it works in a traditional UIKit app without requiring a PQC runtime.
-- To try MCP client mode, set `enableMcpClient = true` and configure the sample server URL/token.
-- To try MCP server mode, set `enableMcpServer = true` and optionally customize the server token/port.
+- MCP client/server options are available in the Settings tab. Toggle one mode
+  and fill in its additional settings. MCP client bearer tokens are kept only in
+  memory for the current app run. MCP server Start applies the current settings
+  immediately.
 - The default upload URL targets `http://localhost:8080`, which maps to the host machine when running in the iOS simulator.
 
 ## Deep-link demo

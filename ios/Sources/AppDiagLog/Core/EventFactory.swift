@@ -1,11 +1,34 @@
 import Foundation
 
-/// Atomic counter for monotonic `seq` + shared ISO-8601 formatter.
+/// Lock-guarded per-session event sequence. It is shared by the public facade
+/// and EventFactory so events created from different threads still get a
+/// deterministic order inside the current session.
+final class EventSequenceGenerator: @unchecked Sendable {
+    private let lock = NSLock()
+    private var nextSequence: Int64
+
+    init(nextSequence: Int64 = 1) {
+        self.nextSequence = max(1, nextSequence)
+    }
+
+    func next() -> Int64 {
+        lock.lock(); defer { lock.unlock() }
+        let value = nextSequence
+        nextSequence &+= 1
+        return value
+    }
+
+    func resetForNewSession() {
+        lock.lock(); defer { lock.unlock() }
+        nextSequence = 1
+    }
+}
+
+/// Creates event envelopes and formats timestamps.
 final class EventFactory: @unchecked Sendable {
     private let sessionIdProvider: @Sendable () -> String?
     private let screenProvider: @Sendable () -> String?
-    private let lock = NSLock()
-    private var seq: Int64 = 0
+    private let sequenceGenerator: EventSequenceGenerator
 
     private let isoFormatter: ISO8601DateFormatter = {
         let fmt = ISO8601DateFormatter()
@@ -15,31 +38,34 @@ final class EventFactory: @unchecked Sendable {
 
     init(
         sessionIdProvider: @escaping @Sendable () -> String?,
-        screenProvider: @escaping @Sendable () -> String?
+        screenProvider: @escaping @Sendable () -> String?,
+        sequenceGenerator: EventSequenceGenerator
     ) {
         self.sessionIdProvider = sessionIdProvider
         self.screenProvider = screenProvider
+        self.sequenceGenerator = sequenceGenerator
     }
 
-    func resetForNewSession() {
-        lock.lock(); defer { lock.unlock() }
-        seq = 0
-    }
-
-    func make(event: String, level: LogLevel, props: [String: String]) -> EventEnvelope {
-        lock.lock()
-        seq &+= 1
-        let s = seq
-        lock.unlock()
+    func make(
+        event: String,
+        level: LogLevel,
+        props: [String: String],
+        observedAt: Date = Date(),
+        sequence: Int64? = nil
+    ) -> EventEnvelope {
         return EventEnvelope(
-            seq: s,
-            ts: isoFormatter.string(from: Date()),
+            seq: sequence ?? sequenceGenerator.next(),
+            ts: isoFormatter.string(from: observedAt),
             sessionId: sessionIdProvider() ?? "pending",
             screen: screenProvider(),
             event: event,
             level: level,
             props: props
         )
+    }
+
+    func resetForNewSession() {
+        sequenceGenerator.resetForNewSession()
     }
 }
 

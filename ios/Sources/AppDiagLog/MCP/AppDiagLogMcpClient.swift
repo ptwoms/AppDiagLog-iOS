@@ -127,7 +127,7 @@ actor AppDiagLogMcpClient {
     private func makeRequest<P: Encodable>(id: Int?, method: String, params: P) -> Data? {
         guard let paramsJSON = try? encoder.anyJSON(params) else { return nil }
         var req = JsonRpcRequest(method: method, params: paramsJSON)
-        req.id = id
+        req.id = id.map(JsonRpcID.int)
         return try? encoder.encode(req)
     }
 

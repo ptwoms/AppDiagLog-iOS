@@ -14,7 +14,7 @@ protocol SymmetricCipher: Sendable {
     var keySize: Int { get }
     var ivSize: Int { get }
 
-    func generateKey() -> Data
+    func generateKey() throws -> Data
     func encrypt(key: Data, plaintext: Data, aad: Data?) throws -> SymmetricSealed
     func decrypt(key: Data, iv: Data, ciphertextAndTag: Data, aad: Data?) throws -> Data
 }
@@ -41,11 +41,11 @@ struct AesGcmCipher: SymmetricCipher {
     let ivSize: Int = 12
     var algorithmId: String { keySize == 32 ? "AES-256-GCM" : "AES-128-GCM" }
 
-    func generateKey() -> Data { randomBytes(keySize) }
+    func generateKey() throws -> Data { try Data.randomBytes(keySize) }
 
     func encrypt(key: Data, plaintext: Data, aad: Data?) throws -> SymmetricSealed {
-        precondition(key.count == keySize, "\(algorithmId) requires a \(keySize)-byte key.")
-        let nonce = try AES.GCM.Nonce(data: randomBytes(ivSize))
+        try DLCondition(key.count == keySize, SymCipherError.invalidKeyLength)
+        let nonce = try AES.GCM.Nonce(data: Data.randomBytes(ivSize))
         let symKey = SymmetricKey(data: key)
         let sealed: AES.GCM.SealedBox
         if let aad {
@@ -57,9 +57,9 @@ struct AesGcmCipher: SymmetricCipher {
     }
 
     func decrypt(key: Data, iv: Data, ciphertextAndTag: Data, aad: Data?) throws -> Data {
-        precondition(key.count == keySize, "\(algorithmId) requires a \(keySize)-byte key.")
-        precondition(iv.count == ivSize, "GCM expects a 96-bit IV.")
-        precondition(ciphertextAndTag.count >= 16, "Payload must include the 16-byte tag.")
+        try DLCondition(key.count == keySize, SymCipherError.invalidKeyLength)
+        try DLCondition(iv.count == ivSize, SymCipherError.invalidIvLength)
+        try DLCondition(ciphertextAndTag.count >= 16, SymCipherError.invalidCiphertextAndTag)
         let bytes = Data(ciphertextAndTag)
         let tagStart = bytes.count - 16
         let box = try AES.GCM.SealedBox(
@@ -82,11 +82,11 @@ struct ChaCha20Poly1305Cipher: SymmetricCipher {
     let keySize: Int = 32
     let ivSize: Int = 12
 
-    func generateKey() -> Data { randomBytes(keySize) }
+    func generateKey() throws -> Data { try Data.randomBytes(keySize) }
 
     func encrypt(key: Data, plaintext: Data, aad: Data?) throws -> SymmetricSealed {
-        precondition(key.count == keySize, "ChaCha20-Poly1305 requires a 32-byte key.")
-        let nonce = try ChaChaPoly.Nonce(data: randomBytes(ivSize))
+        try DLCondition(key.count == keySize, SymCipherError.invalidKeyLength)
+        let nonce = try ChaChaPoly.Nonce(data: Data.randomBytes(ivSize))
         let symKey = SymmetricKey(data: key)
         let sealed: ChaChaPoly.SealedBox
         if let aad {
@@ -98,8 +98,8 @@ struct ChaCha20Poly1305Cipher: SymmetricCipher {
     }
 
     func decrypt(key: Data, iv: Data, ciphertextAndTag: Data, aad: Data?) throws -> Data {
-        precondition(key.count == keySize, "ChaCha20-Poly1305 requires a 32-byte key.")
-        precondition(iv.count == ivSize, "ChaCha20-Poly1305 expects a 96-bit IV.")
+        try DLCondition(key.count == keySize, SymCipherError.invalidKeyLength)
+        try DLCondition(iv.count == ivSize, SymCipherError.invalidIvLength)
         let bytes = Data(ciphertextAndTag)
         let tagStart = bytes.count - 16
         let box = try ChaChaPoly.SealedBox(
@@ -115,13 +115,3 @@ struct ChaCha20Poly1305Cipher: SymmetricCipher {
     }
 }
 
-// MARK: - random
-
-private func randomBytes(_ count: Int) -> Data {
-    var bytes = Data(count: count)
-    let result = bytes.withUnsafeMutableBytes { ptr -> Int32 in
-        SecRandomCopyBytes(kSecRandomDefault, count, ptr.baseAddress!)
-    }
-    precondition(result == errSecSuccess, "SecRandomCopyBytes failed")
-    return bytes
-}

@@ -194,23 +194,17 @@ actor AppDiagLogMcpServer {
     /// Returns true once `data` contains a complete HTTP/1.1 request:
     /// header block ending in `\r\n\r\n` (or `\n\n`) and the declared body.
     private func isCompleteHTTPRequest(_ data: Data) -> Bool {
-        let raw = String(data: data, encoding: .utf8) ?? ""
-        let sep: String
-        if raw.contains("\r\n\r\n") { sep = "\r\n\r\n" }
-        else if raw.contains("\n\n") { sep = "\n\n" }
-        else { return false }
-
-        guard let sepRange = raw.range(of: sep) else { return false }
-        let headerSection = String(raw[raw.startIndex..<sepRange.lowerBound])
-        let lineBreak = sep == "\r\n\r\n" ? "\r\n" : "\n"
-        let headers = headerSection.components(separatedBy: lineBreak)
+        guard let boundary = headerBoundary(in: data),
+              let headerSection = String(data: data.prefix(boundary.headerEnd), encoding: .utf8) else {
+            return false
+        }
+        let headers = headerSection.components(separatedBy: boundary.lineBreak)
         for line in headers {
             let lower = line.lowercased()
             if lower.hasPrefix("content-length:") {
                 let lenStr = lower.dropFirst("content-length:".count).trimmingCharacters(in: .whitespaces)
                 let declared = Int(lenStr) ?? 0
-                let headerEnd = raw.distance(from: raw.startIndex, to: sepRange.upperBound)
-                return data.count >= headerEnd + declared
+                return data.count >= boundary.bodyStart + declared
             }
         }
         return true // no Content-Length → body is empty
@@ -242,25 +236,12 @@ actor AppDiagLogMcpServer {
     }
 
     private func parseHTTP(_ data: Data) -> HttpRequest? {
-        guard let raw = String(data: data, encoding: .utf8) else { return nil }
-        // Split header section from body at the blank line.
-        let crlf2 = "\r\n\r\n"
-        let lf2 = "\n\n"
-        let headerBodySep: String
-        let headerBodyOffset: Int
-        if let r = raw.range(of: crlf2) {
-            headerBodySep = crlf2
-            headerBodyOffset = raw.distance(from: raw.startIndex, to: r.upperBound)
-        } else if let r = raw.range(of: lf2) {
-            headerBodySep = lf2
-            headerBodyOffset = raw.distance(from: raw.startIndex, to: r.upperBound)
-        } else {
+        guard let boundary = headerBoundary(in: data),
+              let headerSection = String(data: data.prefix(boundary.headerEnd), encoding: .utf8) else {
             return nil
         }
 
-        let headerSection = String(raw[raw.startIndex..<raw.index(raw.startIndex, offsetBy: headerBodyOffset - headerBodySep.count)])
-        let lineBreak = headerBodySep == crlf2 ? "\r\n" : "\n"
-        var lines = headerSection.components(separatedBy: lineBreak)
+        var lines = headerSection.components(separatedBy: boundary.lineBreak)
         guard !lines.isEmpty else { return nil }
 
         let requestLine = lines.removeFirst().components(separatedBy: " ")
@@ -281,12 +262,24 @@ actor AppDiagLogMcpServer {
         let contentLength = Int(headers["content-length"] ?? "0") ?? 0
         let bodyData: Data
         if contentLength > 0 {
-            bodyData = Data(data.advanced(by: headerBodyOffset).prefix(contentLength))
+            bodyData = Data(data.dropFirst(boundary.bodyStart).prefix(contentLength))
         } else {
             bodyData = Data()
         }
 
         return HttpRequest(method: method, path: path, headers: headers, body: bodyData)
+    }
+
+    private func headerBoundary(in data: Data) -> (headerEnd: Int, bodyStart: Int, lineBreak: String)? {
+        let crlf = Data("\r\n\r\n".utf8)
+        if let range = data.range(of: crlf) {
+            return (range.lowerBound, range.upperBound, "\r\n")
+        }
+        let lf = Data("\n\n".utf8)
+        if let range = data.range(of: lf) {
+            return (range.lowerBound, range.upperBound, "\n")
+        }
+        return nil
     }
 
     // MARK: - Request dispatch
@@ -295,12 +288,12 @@ actor AppDiagLogMcpServer {
         // CORS preflight.
         if req.method == "OPTIONS" {
             return HttpResponse(status: 204, statusText: "No Content", contentType: "text/plain",
-                                body: Data(), extraHeaders: corsHeaders())
+                                body: Data(), extraHeaders: corsHeaders(for: req))
         }
 
         // Auth check (constant-time).
         guard case .server = config else {
-            return errorResponse(nil, McpErrorCode.internalError, "Server config missing")
+            return errorResponse(nil, McpErrorCode.internalError, "Server config missing", request: req)
         }
         // RFC 7235 §2.1: auth-scheme is case-insensitive; the Bearer token is case-sensitive.
         let authHeader = (req.headers["authorization"] ?? "")
@@ -311,24 +304,24 @@ actor AppDiagLogMcpServer {
             provided = authHeader.trimmingCharacters(in: .whitespaces)
         }
         guard constantTimeEquals(provided, token) else {
-            return errorResponse(nil, McpErrorCode.unauthorized, "Unauthorized")
+            return errorResponse(nil, McpErrorCode.unauthorized, "Unauthorized", request: req)
         }
 
         guard req.method == "POST", req.path == "/mcp" else {
-            return errorResponse(nil, McpErrorCode.methodNotFound, "Use POST /mcp")
+            return errorResponse(nil, McpErrorCode.methodNotFound, "Use POST /mcp", request: req)
         }
 
         guard let rpcRequest = try? decoder.decode(JsonRpcRequest.self, from: req.body) else {
-            return errorResponse(nil, McpErrorCode.parseError, "Invalid JSON-RPC request")
+            return errorResponse(nil, McpErrorCode.parseError, "Invalid JSON-RPC request", request: req)
         }
 
         let responseBody = await dispatch(rpcRequest)
         if responseBody.isEmpty {
             return HttpResponse(status: 204, statusText: "No Content", contentType: "application/json",
-                                body: Data(), extraHeaders: corsHeaders())
+                                body: Data(), extraHeaders: corsHeaders(for: req))
         }
         return HttpResponse(status: 200, statusText: "OK", contentType: "application/json",
-                            body: responseBody, extraHeaders: corsHeaders())
+                            body: responseBody, extraHeaders: corsHeaders(for: req))
     }
 
     private func dispatch(_ req: JsonRpcRequest) async -> Data {
@@ -582,11 +575,12 @@ actor AppDiagLogMcpServer {
 
     // MARK: - HTTP response building
 
-    private func errorResponse(_ id: Int?, _ code: Int, _ message: String) -> HttpResponse {
+    private func errorResponse(_ id: JsonRpcID?, _ code: Int, _ message: String, request: HttpRequest? = nil) -> HttpResponse {
         let body = encodeResponse(JsonRpcResponse(id: id, error: JsonRpcError(code: code, message: message)))
+        let extraHeaders = request.map(corsHeaders(for:)) ?? [:]
         return HttpResponse(status: code == McpErrorCode.unauthorized ? 401 : 400,
                             statusText: code == McpErrorCode.unauthorized ? "Unauthorized" : "Bad Request",
-                            contentType: "application/json", body: body)
+                            contentType: "application/json", body: body, extraHeaders: extraHeaders)
     }
 
     private func buildHTTPResponse(_ response: HttpResponse) -> Data {
@@ -601,14 +595,24 @@ actor AppDiagLogMcpServer {
         return data
     }
 
-    private func corsHeaders() -> [String: String] {
+    private func corsHeaders(for request: HttpRequest) -> [String: String] {
         guard case let .server(_, _, allowedOrigins, _) = config, !allowedOrigins.isEmpty else {
             return [:]
         }
+        let requestOrigin = request.headers["origin"]
+        let allowOrigin: String
+        if allowedOrigins.contains("*") {
+            allowOrigin = "*"
+        } else if let requestOrigin, allowedOrigins.contains(requestOrigin) {
+            allowOrigin = requestOrigin
+        } else {
+            return [:]
+        }
         return [
-            "Access-Control-Allow-Origin": allowedOrigins.joined(separator: ", "),
+            "Access-Control-Allow-Origin": allowOrigin,
             "Access-Control-Allow-Methods": "POST, OPTIONS",
-            "Access-Control-Allow-Headers": "Content-Type, Authorization",
+            "Access-Control-Allow-Headers": request.headers["access-control-request-headers"] ?? "Content-Type, Authorization, MCP-Protocol-Version, MCP-Session-Id",
+            "Access-Control-Expose-Headers": "MCP-Protocol-Version, MCP-Session-Id",
         ]
     }
 

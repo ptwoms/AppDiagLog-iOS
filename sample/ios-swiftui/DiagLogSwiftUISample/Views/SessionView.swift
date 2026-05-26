@@ -110,21 +110,8 @@ struct SessionView: View {
     }
 
     private func appendStatus(_ message: String) {
-        statusLog.insert(LogEntry("\(timestamp())  \(message)"), at: 0)
-        statusLog = Array(statusLog.prefix(12))
+        statusLog.append(message)
     }
-
-    private func timestamp() -> String {
-        Date.now.formatted(date: .omitted, time: .standard)
-    }
-}
-
-// MARK: - Shared log entry
-
-private struct LogEntry: Identifiable {
-    let id = UUID()
-    let message: String
-    init(_ message: String) { self.message = message }
 }
 
 // MARK: - Session index reader

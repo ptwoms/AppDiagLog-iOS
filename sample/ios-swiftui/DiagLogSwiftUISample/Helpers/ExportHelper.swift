@@ -1,11 +1,16 @@
 import UIKit
 
 enum ExportHelper {
-    static func shareExport(zipURL: URL, presentingFrom sourceViewController: UIViewController? = nil) {
+    @MainActor
+    static func shareExport(zipURL: URL) {
         let shareURL = stageForSharingIfNeeded(zipURL: zipURL)
-        let host = sourceViewController ?? topMostController()
+        let host = topMostController()
         let activity = UIActivityViewController(activityItems: [shareURL], applicationActivities: nil)
-        activity.excludedActivityTypes = [.assignToContact, .saveToCameraRoll, .openInIBooks]
+        activity.excludedActivityTypes = [
+            .assignToContact, .saveToCameraRoll, .openInIBooks,
+            .print,
+            .postToVimeo, .postToTencentWeibo, .postToWeibo, .postToTwitter, .postToFacebook, .postToFlickr
+        ]
         activity.completionWithItemsHandler = { _, _, _, _ in
             cleanupStagedFileIfNeeded(shareURL: shareURL, originalURL: zipURL)
         }
@@ -38,6 +43,7 @@ enum ExportHelper {
         try? FileManager.default.removeItem(at: shareURL)
     }
 
+    @MainActor
     private static func topMostController() -> UIViewController? {
         let scenes = UIApplication.shared.connectedScenes
         let windowScene = scenes.first { $0.activationState == .foregroundActive } as? UIWindowScene

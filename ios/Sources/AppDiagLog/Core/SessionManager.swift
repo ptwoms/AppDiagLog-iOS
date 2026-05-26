@@ -11,7 +11,7 @@ actor SessionManager {
     private let indexStore: SessionIndexStore
     private let fileWriter: SessionFileWriter
     private let eviction: EvictionPolicy
-    private let deviceMetadata: @Sendable () -> [String: String]
+    private let deviceMetadata: @Sendable () async -> [String: String]
     private let sessionIdHolder: SessionIdHolder
 
     private var index: SessionIndex
@@ -31,7 +31,7 @@ actor SessionManager {
         indexStore: SessionIndexStore,
         fileWriter: SessionFileWriter,
         eviction: EvictionPolicy,
-        deviceMetadata: @escaping @Sendable () -> [String: String],
+        deviceMetadata: @escaping @Sendable () async -> [String: String],
         sessionIdHolder: SessionIdHolder
     ) {
         self.config = config
@@ -169,6 +169,7 @@ actor SessionManager {
                 entry.fileSizeBytes = size
                 entry.eventCount = events.count
             }
+            await indexStore.persist(index)
         } catch {
             SdkLog.error("persist failed for session \(state.id)", error: error)
         }

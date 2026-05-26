@@ -4,7 +4,7 @@ import AppDiagLog
 
 struct LoggingView: View {
     @State private var sessionTag = "checkout-crash-repro"
-    @State private var actionLog = ["Ready for manual logging."]
+    @State private var actionLog = [LogEntry("Ready for manual logging.")]
 
     var body: some View {
         ScrollView {
@@ -74,8 +74,8 @@ struct LoggingView: View {
                         .font(.headline)
 
                     LazyVStack(alignment: .leading, spacing: 8) {
-                        ForEach(Array(actionLog.enumerated()), id: \.offset) { _, action in
-                            Text(action)
+                        ForEach(actionLog) {
+                            Text($0.message)
                                 .font(.footnote.monospaced())
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(10)
@@ -104,11 +104,6 @@ struct LoggingView: View {
     }
 
     private func appendAction(_ message: String) {
-        actionLog.insert("\(timestamp())  \(message)", at: 0)
-        actionLog = Array(actionLog.prefix(20))
-    }
-
-    private func timestamp() -> String {
-        Date().formatted(date: .omitted, time: .standard)
+        actionLog.append(message, maxEntries: 20)
     }
 }

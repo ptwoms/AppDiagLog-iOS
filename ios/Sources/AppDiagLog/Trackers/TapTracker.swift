@@ -47,6 +47,7 @@ final class TapTrackerBridge: @unchecked Sendable {
         lock.unlock()
     }
 
+    @MainActor
     fileprivate func observeEvent(_ event: UIEvent) {
         guard event.type == .touches else { return }
         guard let touches = event.allTouches else { return }
@@ -90,6 +91,7 @@ final class TapTrackerBridge: @unchecked Sendable {
         }
     }
 
+    @MainActor
     private static func isInsideSecureInput(_ view: UIView) -> Bool {
         var current: UIView? = view
         while let v = current {

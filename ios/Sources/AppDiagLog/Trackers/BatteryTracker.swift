@@ -25,13 +25,21 @@ final class BatteryTracker: Tracker, @unchecked Sendable {
             forName: UIDevice.batteryStateDidChangeNotification,
             object: nil,
             queue: .main
-        ) { [weak self] _ in self?.handleBattery() }
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.handleBattery()
+            }
+        }
 
         let batteryLevelToken = center.addObserver(
             forName: UIDevice.batteryLevelDidChangeNotification,
             object: nil,
             queue: .main
-        ) { [weak self] _ in self?.handleBattery() }
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.handleBattery()
+            }
+        }
 
         let thermalToken = center.addObserver(
             forName: ProcessInfo.thermalStateDidChangeNotification,
@@ -66,7 +74,7 @@ final class BatteryTracker: Tracker, @unchecked Sendable {
 
     // MARK: - Handlers (called on main queue)
 
-    private func handleBattery() {
+    @MainActor private func handleBattery() {
         let device = UIDevice.current
         let levelValue = device.batteryLevel
         let level = levelValue >= 0 ? String(Int(levelValue * 100)) : "-1"

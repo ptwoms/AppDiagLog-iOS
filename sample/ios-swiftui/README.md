@@ -30,7 +30,10 @@ sample/ios-swiftui/
 - The sample defaults to `.rsaOaep3072(...)` so it can run on iOS 16+ without an extra PQC provider.
 - If you want PQC in the sample, switch to `.mlKem768(...)` or `.mlKem512(...)` and provide a compatible provider/runtime.
 - Update the upload URL/token defaults in `SampleConfiguration` if you want to send exports to the backend.
-- MCP toggles are defined in `SampleConfiguration` and intentionally default to `false`.
+- MCP client/server options are available in the Settings tab. Toggle one mode
+  and fill in its additional settings. MCP client bearer tokens are kept only in
+  memory for the current app run. MCP server Start applies the current settings
+  immediately.
 
 ## Notes
 

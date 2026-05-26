@@ -12,8 +12,7 @@ import java.io.Serializable
 /**
  * One decrypted event. Composite PK on (session_id, seq) so re-uploads of the
  * same session UPSERT-by-overwrite without producing duplicate rows. The seq
- * field is the SDK's monotonic per-session counter — guaranteed unique within
- * a session.
+ * field is the SDK's monotonic log order inside that session.
  *
  * `props` is stored as a JSON string in a CLOB column. We keep it as text
  * (rather than @ElementCollection on a side table) because:

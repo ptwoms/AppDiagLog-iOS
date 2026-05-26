@@ -1,8 +1,23 @@
 import UIKit
 import Foundation
+import Combine
 import AppDiagLog
 
 enum SampleConfiguration {
+    enum DefaultsKey {
+        static let enableMcpClient = "sample.mcp.client.enabled"
+        static let enableMcpServer = "sample.mcp.server.enabled"
+        static let mcpClientURL = "sample.mcp.client.url"
+        static let mcpClientToolName = "sample.mcp.client.toolName"
+        static let mcpServerPort = "sample.mcp.server.port"
+        static let mcpServerBindAddress = "sample.mcp.server.bindAddress"
+    }
+
+    static let defaultMcpClientURL = "http://localhost:8080/api/v1/mcp"
+    static let defaultMcpClientToolName = "submit_diagnostics"
+    static let defaultMcpServerPort = 7321
+    static let defaultMcpServerBindAddress = "127.0.0.1"
+
     static let placeholderPublicKey = "REPLACE_WITH_YOUR_BASE64_PUBLIC_KEY"
     static let sampleKeyBase64 = placeholderPublicKey
     static let sampleKeyID = "sample-key-2026-04"
@@ -24,13 +39,24 @@ enum SampleConfiguration {
     static let sessionTimeoutMinutes = 30
     static let maxEventsPerSecond = 100
 
-    static let enableMcpClient = false
-    static let enableMcpServer = false
-    static let sampleMcpClientURL = "https://mcp.example.com/rpc"
-    static let sampleMcpAuthToken = "REPLACE_WITH_MCP_TOKEN"
-    static let sampleMcpToolName = "submit_diagnostics"
-    static let sampleMcpServerPort: UInt16 = 7321
-    static let sampleMcpServerBindAddress = "127.0.0.1"
+    static var enableMcpClient: Bool {
+        UserDefaults.standard.bool(forKey: DefaultsKey.enableMcpClient)
+    }
+    static var enableMcpServer: Bool {
+        UserDefaults.standard.bool(forKey: DefaultsKey.enableMcpServer)
+    }
+    static var sampleMcpClientURL: String {
+        stringDefault(DefaultsKey.mcpClientURL, defaultMcpClientURL)
+    }
+    static var sampleMcpClientToolName: String {
+        stringDefault(DefaultsKey.mcpClientToolName, defaultMcpClientToolName)
+    }
+    static var sampleMcpServerPort: UInt16 {
+        UInt16(intDefault(DefaultsKey.mcpServerPort, defaultMcpServerPort))
+    }
+    static var sampleMcpServerBindAddress: String {
+        stringDefault(DefaultsKey.mcpServerBindAddress, defaultMcpServerBindAddress)
+    }
 
     static let keyWrap: AsymmetricKey = .rsaOaep3072(keyId: sampleKeyID, publicKey: keyBytes)
     static let symmetric: SymmetricAlgorithm = .aes256gcm
@@ -54,22 +80,6 @@ enum SampleConfiguration {
     )
 
     static var mcpConfig: McpConfig? {
-        if enableMcpClient {
-            return .client(
-                serverUrl: sampleMcpClientURL,
-                authToken: sampleMcpAuthToken,
-                toolName: sampleMcpToolName
-            )
-        }
-
-        if enableMcpServer {
-            return .server(
-                port: sampleMcpServerPort,
-                authToken: sampleMcpAuthToken,
-                bindAddress: sampleMcpServerBindAddress
-            )
-        }
-
         return nil
     }
 
@@ -97,6 +107,19 @@ enum SampleConfiguration {
         return "Disabled"
     }
 
+    static func stringDefault(_ key: String, _ fallback: String) -> String {
+        guard let value = UserDefaults.standard.string(forKey: key),
+              !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return fallback
+        }
+        return value
+    }
+
+    static func intDefault(_ key: String, _ fallback: Int) -> Int {
+        let value = UserDefaults.standard.integer(forKey: key)
+        return value > 0 ? value : fallback
+    }
+
     static var keyWrapDescription: String {
         switch keyWrap {
         case .mlKem768:
@@ -115,6 +138,18 @@ enum SampleConfiguration {
     static let sdkVersionLabel = "Local AppDiagLog package"
 }
 
+@MainActor
+final class SampleMcpRuntimeState: ObservableObject {
+    static let shared = SampleMcpRuntimeState()
+
+    @Published var clientAuthToken = ""
+    @Published var serverAuthToken: String?
+    @Published var isServerRunning = false
+    @Published var serverStatus: String?
+
+    private init() {}
+}
+
 @main
 final class AppDelegate: UIResponder, UIApplicationDelegate {
     func application(
@@ -122,10 +157,6 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
         AppDiagLog.initialize(config: SampleConfiguration.sdkConfig)
-
-        if SampleConfiguration.enableMcpServer {
-            AppDiagLog.startMcpServer()
-        }
 
         AppDiagLog.info(
             "sample_app_launch",

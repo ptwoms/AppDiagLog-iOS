@@ -136,12 +136,7 @@ struct TrackerProbesView: View {
     }
 
     private func appendAction(_ message: String) {
-        actionLog.insert(LogEntry("\(timestamp())  \(message)"), at: 0)
-        actionLog = Array(actionLog.prefix(12))
-    }
-
-    private func timestamp() -> String {
-        Date().formatted(date: .omitted, time: .standard)
+        actionLog.append(message)
     }
 }
 
@@ -217,12 +212,4 @@ private struct UIKitMemProbeInfo {
             footprint: footprintMB > 0 ? "\(footprintMB) MB" : "Unavailable"
         )
     }
-}
-
-// MARK: - Shared log entry
-
-private struct LogEntry: Identifiable {
-    let id = UUID()
-    let message: String
-    init(_ message: String) { self.message = message }
 }

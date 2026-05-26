@@ -54,7 +54,7 @@ struct MLKEMWrapper: KemWrapper {
         let enc = try provider.encapsulate(publicKey: pubBytes)
         defer {
             var ss = enc.sharedSecret
-            wipe(&ss)
+            ss.wipe()
         }
         let wrapped = try AesKwp.wrap(kek: enc.sharedSecret, key: dek)
         return WrappedDek(
@@ -203,11 +203,4 @@ struct ECDHKEMWrapper: KemWrapper {
         }
         return try P256.KeyAgreement.PublicKey(x963Representation: data)
     }
-}
-
-// MARK: - misc helpers
-
-@inline(__always)
-private func wipe(_ data: inout Data) {
-    for i in 0..<data.count { data[i] = 0 }
 }

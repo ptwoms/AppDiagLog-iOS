@@ -7,7 +7,7 @@ envelope it finds, and writes the events in the chosen output format:
 
   jsonl     — one .jsonl file per session (default)
   csv       — sessions.csv + events.csv
-  combined  — single combined.jsonl with all events sorted by timestamp
+  combined  — single combined.jsonl with continuous sequence across sessions
   xls       — export.xlsx with two sheets: Sessions and Events
 
 Algorithm dispatch is driven by the strings embedded in each envelope:
@@ -46,7 +46,7 @@ try:
 except ImportError as e:  # pragma: no cover
     sys.stderr.write(
         "ERROR: 'cryptography' is required.\n"
-        "Install with: pip install -r scripts/requirements.txt\n"
+        "Install with: pip install -r requirements.txt\n"
         f"Original error: {e}\n"
     )
     sys.exit(2)
@@ -267,6 +267,7 @@ def decrypt_envelope(envelope: Envelope, keys: dict[str, bytes]) -> list[dict[st
     if envelope.session_tag:
         start_props["session_tag"] = envelope.session_tag
     start_event: dict[str, Any] = {
+        "seq": 0,
         "ts": envelope.created_at,
         "session_id": envelope.session_id,
         "screen": None,
@@ -277,11 +278,13 @@ def decrypt_envelope(envelope: Envelope, keys: dict[str, bytes]) -> list[dict[st
 
     # Best-effort end timestamp when sealed_at is absent
     end_ts = (events[-1].get("ts") if events else None) or envelope.sealed_at or envelope.created_at
+    end_seq = max((_seq_sort_key(ev.get("seq")) for ev in events), default=0) + 1
 
     # -- session_end ----------------------------------------------------------
     end_props: dict[str, str] = {"event_count": str(len(events))}
     if has_clean_seal:
         tail: list[dict[str, Any]] = [{
+            "seq": end_seq,
             "ts": envelope.sealed_at,
             "session_id": envelope.session_id,
             "screen": None,
@@ -292,6 +295,7 @@ def decrypt_envelope(envelope: Envelope, keys: dict[str, bytes]) -> list[dict[st
     else:
         end_props["sealed"] = "false"
         tail = [{
+            "seq": end_seq,
             "ts": end_ts,
             "session_id": envelope.session_id,
             "screen": None,
@@ -328,7 +332,7 @@ def write_jsonl(out_dir: Path, envelope: Envelope, events: list[dict[str, Any]])
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / f"{envelope.session_id}.jsonl"
     with path.open("w", encoding="utf-8") as f:
-        for ev in events:
+        for ev in sorted(events, key=_event_sort_key):
             f.write(json.dumps(ev, sort_keys=True) + "\n")
 
 
@@ -338,18 +342,21 @@ def write_combined_jsonl(
 ) -> None:
     """Write every event from every session into a single combined.jsonl file.
 
-    Events are sorted by their ``ts`` field (ISO-8601 strings sort correctly
-    lexicographically). A ``session_id`` key is injected into each event object
-    so that the combined file is self-contained.
+    Sessions are walked by creation time, then events are sorted by their
+    SDK-assigned per-session ``seq`` field. The output ``seq`` is rewritten as a
+    continuous combined counter so the file is self-contained and globally
+    ordered.
     """
     out_dir.mkdir(parents=True, exist_ok=True)
     all_events: list[dict[str, Any]] = []
-    for envelope, events in collected:
-        for ev in events:
+    combined_seq = 1
+    for envelope, events in sorted(collected, key=_session_sort_key):
+        for ev in sorted(events, key=_event_sort_key):
             merged = {"session_id": envelope.session_id}
             merged.update(ev)
+            merged["seq"] = combined_seq
             all_events.append(merged)
-    all_events.sort(key=lambda e: e.get("ts") or "9999-99-99")
+            combined_seq += 1
     path = out_dir / "combined.jsonl"
     with path.open("w", encoding="utf-8") as f:
         for ev in all_events:
@@ -370,7 +377,8 @@ def write_xlsx(
     The workbook has two sheets:
     - **Sessions** — one row per session (same columns as sessions.csv).
     - **Events**   — one row per event across all sessions (same columns as
-      events.csv), sorted by timestamp then session for readability.
+      events.csv), sorted by session creation time and SDK per-session sequence.
+      The exported ``seq`` column is rewritten as a continuous combined counter.
 
     Requires ``openpyxl`` (pip install openpyxl).
     """
@@ -399,7 +407,8 @@ def write_xlsx(
 
     # Collect events for sorting, then write both sheets together
     all_event_rows: list[list[Any]] = []
-    for envelope, events in collected:
+    combined_seq = 1
+    for envelope, events in sorted(collected, key=_session_sort_key):
         ws_sessions.append([
             envelope.session_id,
             envelope.key_id,
@@ -409,21 +418,18 @@ def write_xlsx(
             envelope.session_tag or "",
             json.dumps(envelope.device_metadata, sort_keys=True),
         ])
-        for ev in events:
+        for ev in sorted(events, key=_event_sort_key):
             all_event_rows.append([
                 envelope.session_id,
-                ev.get("seq"),
+                combined_seq,
                 ev.get("ts") or "",
                 ev.get("level") or "",
                 ev.get("event") or "",
                 ev.get("screen") or "",
                 json.dumps(ev.get("props") or {}, sort_keys=True),
             ])
+            combined_seq += 1
 
-    # Sort by ts (column index 2) then seq (column index 1). Synthetic boundary events
-    # (session_start, crash, session_end) have no seq; use inf so they sort after real
-    # events that share the same timestamp rather than before them (seq 0 was wrong).
-    all_event_rows.sort(key=lambda r: (r[2] or "9999-99-99", r[1] if r[1] is not None else float("inf")))
     for row in all_event_rows:
         ws_events.append(row)
 
@@ -453,7 +459,7 @@ def write_csv_rows(sessions_w: csv.writer, events_w: csv.writer,
         envelope.session_tag or "",
         json.dumps(envelope.device_metadata, sort_keys=True),
     ])
-    for ev in events:
+    for ev in sorted(events, key=_event_sort_key):
         events_w.writerow([
             envelope.session_id,
             ev.get("seq"),
@@ -463,6 +469,25 @@ def write_csv_rows(sessions_w: csv.writer, events_w: csv.writer,
             ev.get("screen") or "",
             json.dumps(ev.get("props") or {}, sort_keys=True),
         ])
+
+
+def _event_sort_key(ev: dict[str, Any]) -> tuple[int, str]:
+    return (_seq_sort_key(ev.get("seq")), ev.get("ts") or "9999-99-99")
+
+
+def _session_sort_key(item: tuple[Envelope, list[dict[str, Any]]]) -> tuple[str, str]:
+    envelope, _ = item
+    return (envelope.created_at, envelope.session_id)
+
+
+def _seq_sort_key(value: Any) -> int:
+    try:
+        seq = int(value)
+    except (TypeError, ValueError):
+        return 2**63 - 1
+    if seq < 0:
+        return 2**63 - 1
+    return seq
 
 
 # ---------------------------------------------------------------------------
@@ -480,7 +505,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--format", choices=("jsonl", "csv", "combined", "xls"), default="jsonl",
                         help="Output format. 'jsonl' = one file per session. "
                              "'csv' = sessions.csv + events.csv. "
-                             "'combined' = single combined.jsonl sorted by timestamp. "
+                             "'combined' = single combined.jsonl with continuous sequence. "
                              "'xls' = export.xlsx with Sessions and Events sheets.")
     args = parser.parse_args(argv)
 

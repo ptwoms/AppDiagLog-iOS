@@ -4,7 +4,7 @@ import XCTest
 final class CryptoRoundtripTests: XCTestCase {
 
     func testAesGcmRoundTrip() throws {
-        let key = AesGcmEncryptor.generateKey()
+        let key = try AesGcmEncryptor.generateKey()
         let plaintext = Data("hello diagnostic log".utf8)
         let aad = Data("aad".utf8)
 
@@ -20,7 +20,7 @@ final class CryptoRoundtripTests: XCTestCase {
     }
 
     func testAesGcmAadMismatchFailsAuth() throws {
-        let key = AesGcmEncryptor.generateKey()
+        let key = try AesGcmEncryptor.generateKey()
         let sealed = try AesGcmEncryptor.encrypt(
             key: key,
             plaintext: Data("p".utf8),
@@ -38,7 +38,7 @@ final class CryptoRoundtripTests: XCTestCase {
     }
 
     func testAesGcmFreshIvOnEveryEncrypt() throws {
-        let key = AesGcmEncryptor.generateKey()
+        let key = try AesGcmEncryptor.generateKey()
         let p = Data("same".utf8)
         let a = try AesGcmEncryptor.encrypt(key: key, plaintext: p)
         let b = try AesGcmEncryptor.encrypt(key: key, plaintext: p)
@@ -47,17 +47,17 @@ final class CryptoRoundtripTests: XCTestCase {
     }
 
     func testAesKwpRoundTripExactBlockMultiple() throws {
-        let kek = AesGcmEncryptor.generateKey()           // 32 bytes
-        let dek = AesGcmEncryptor.generateKey()           // 32 bytes (multiple of 8)
+        let kek = try AesGcmEncryptor.generateKey()           // 32 bytes
+        let dek = try AesGcmEncryptor.generateKey()           // 32 bytes (multiple of 8)
         let wrapped = try AesKwp.wrap(kek: kek, key: dek)
         let unwrapped = try AesKwp.unwrap(kek: kek, wrapped: wrapped)
         XCTAssertEqual(unwrapped, dek)
     }
 
-    func testWipeZeroesDek() {
-        var key = AesGcmEncryptor.generateKey()
+    func testWipeZeroesDek() throws {
+        var key = try AesGcmEncryptor.generateKey()
         XCTAssertFalse(key.allSatisfy { $0 == 0 }, "generated key should not be all zeros")
-        AesGcmEncryptor.wipe(&key)
+        key.wipe()
         XCTAssertTrue(key.allSatisfy { $0 == 0 }, "wipe should zero the buffer")
     }
 

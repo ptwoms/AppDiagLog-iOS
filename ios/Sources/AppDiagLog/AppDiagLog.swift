@@ -1,15 +1,31 @@
 import Foundation
 
+struct PendingLog: Sendable, Equatable {
+    let sequence: Int64
+    let event: String
+    let level: LogLevel
+    let properties: [String: String]
+    let observedAt: Date
+}
+
+enum LogRoute: Sendable {
+    case runtime(AppDiagLogRuntime, PendingLog)
+    case queued
+    case discarded
+}
+
 /// Public singleton facade for the AppDiagLog SDK.
 ///
 /// Every public method is safe to call:
 ///   - from any thread (methods are `nonisolated`)
 ///   - before `initialize(...)` (they become no-ops)
+///   - while `initialize(...)` is bootstrapping (logs are buffered briefly)
 ///   - during app shutdown (they degrade gracefully)
 ///
 /// **No-throw guarantee**: every entry point wraps its body in a catch-all. An SDK
 /// bug will never crash the host app.
 public enum AppDiagLog {
+    static let sdkVersion = "1.0.0"
 
     // MARK: - Lifecycle
 
@@ -38,36 +54,31 @@ public enum AppDiagLog {
             if !pqcProvider.isAvailable {
                 assertionFailure(
                     "[AppDiagLog] ML-KEM key is configured but PQCProvider is not available " +
-                    "on this runtime. Inject a liboqs-backed PQCProvider or target iOS 18+."
+                    "on this runtime. Inject a liboqs-backed PQCProvider or target iOS 26+."
                 )
             }
         default:
             break
         }
-        safely("initialize") {
-            let runtime = AppDiagLogRuntime.make(config: config, pqcProvider: pqcProvider)
-            state.setRuntime(runtime)
+        // Async bootstrap: crash recovery + first-session provisioning + tracker start.
+        Task.detached(priority: .utility) {
+            let runtime = await AppDiagLogRuntime.make(
+                config: config,
+                pqcProvider: pqcProvider,
+                sequenceGenerator: state.sequenceGenerator
+            )
 
-            // Async bootstrap: crash recovery + first-session provisioning + tracker start.
-            Task.detached(priority: .utility) {
-                await safelyAsync("bootstrap") {
-                    await runtime.sessionManager.bootstrap()
-                }
-                await safelyAsync("ensure-session") {
-                    _ = await runtime.sessionManager.ensureSession()
-                }
-                await safelyAsync("pipeline-reset") {
-                    await runtime.pipeline.handleSessionRotated()
-                }
-
-                // Auto-tracker registry is created lazily — Tier 2/3 trackers don't
-                // allocate unless explicitly enabled in config.
-                let registry = AutoTrackRegistry(runtime: runtime)
-                state.setRegistry(registry)
-                await safelyAsync("autotrack-start") {
-                    await registry.start()
-                }
-            }
+            await runtime.sessionManager.bootstrap()
+            _ = await runtime.sessionManager.ensureSession()
+            await runtime.pipeline.handleSessionRotated(resetSequence: false)
+            let pendingLogs = state.setRuntime(runtime)
+            await replay(pendingLogs, into: runtime)
+            
+            // Auto-tracker registry is created lazily — Tier 2/3 trackers don't
+            // allocate unless explicitly enabled in config.
+            let registry = AutoTrackRegistry(runtime: runtime)
+            state.setRegistry(registry)
+            await registry.start()
         }
     }
 
@@ -77,12 +88,8 @@ public enum AppDiagLog {
         guard let runtime = state.runtime else { return }
         let registry = state.registry
         Task.detached(priority: .utility) {
-            await safelyAsync("trackers-stop") {
-                await registry?.stop()
-            }
-            await safelyAsync("pipeline-shutdown") {
-                await runtime.pipeline.shutdown()
-            }
+            await registry?.stop()
+            await runtime.pipeline.shutdown()
         }
     }
 
@@ -107,11 +114,35 @@ public enum AppDiagLog {
     /// Hot path. Public API returns instantly — the actual enqueue happens on
     /// `.utility`-priority detached task so UI work is never preempted.
     private static func log(event: String, level: LogLevel, properties: [String: String]) {
-        guard let runtime = state.runtime else { return }
+        switch state.routeLog(event: event, level: level, properties: properties) {
+        case .runtime(let runtime, let sequenced):
+            enqueue(runtime: runtime, pending: sequenced)
+        default:
+            return
+        }
+    }
+
+    private static func replay(_ pendingLogs: [PendingLog], into runtime: AppDiagLogRuntime) async {
+        for pending in pendingLogs {
+            await runtime.pipeline.enqueue(
+                event: pending.event,
+                level: pending.level,
+                props: pending.properties,
+                observedAt: pending.observedAt,
+                sequence: pending.sequence
+            )
+        }
+    }
+
+    private static func enqueue(runtime: AppDiagLogRuntime, pending: PendingLog) {
         Task.detached(priority: .utility) {
-            await safelyAsync("log:\(event)") {
-                await runtime.pipeline.enqueue(event: event, level: level, props: properties)
-            }
+            await runtime.pipeline.enqueue(
+                event: pending.event,
+                level: pending.level,
+                props: pending.properties,
+                observedAt: pending.observedAt,
+                sequence: pending.sequence
+            )
         }
     }
 
@@ -122,17 +153,15 @@ public enum AppDiagLog {
     /// triage, and is also recorded as a searchable event inside the session.
     public static func tagSession(_ label: String) {
         guard let runtime = state.runtime else { return }
+        let sequence = runtime.sequenceGenerator.next()
         Task.detached(priority: .utility) {
-            await safelyAsync("tagSession") {
-                await runtime.sessionManager.tagSession(label)
-            }
-            await safelyAsync("tagSession-event") {
-                await runtime.pipeline.enqueue(
-                    event: EventName.sessionTag,
-                    level: .info,
-                    props: ["label": label]
-                )
-            }
+            await runtime.sessionManager.tagSession(label)
+            await runtime.pipeline.enqueue(
+                event: EventName.sessionTag,
+                level: .info,
+                props: ["label": label],
+                sequence: sequence
+            )
         }
     }
 
@@ -141,16 +170,16 @@ public enum AppDiagLog {
     /// from SwiftUI redraws that re-fire `onAppear` without a navigation change).
     public static func trackScreen(_ name: String) {
         guard let runtime = state.runtime else { return }
-        safely("trackScreen") {
-            guard runtime.currentScreen.get() != name else { return }
-            runtime.currentScreen.set(name)
-            Task.detached(priority: .utility) {
-                await runtime.pipeline.enqueue(
-                    event: EventName.screenView,
-                    level: .info,
-                    props: ["screen": name, "kind": "swiftui"]
-                )
-            }
+        guard runtime.currentScreen.get() != name else { return }
+        runtime.currentScreen.set(name)
+        let sequence = runtime.sequenceGenerator.next()
+        Task.detached(priority: .utility) {
+            await runtime.pipeline.enqueue(
+                event: EventName.screenView,
+                level: .info,
+                props: ["screen": name, "kind": "swiftui"],
+                sequence: sequence
+            )
         }
     }
 
@@ -158,13 +187,23 @@ public enum AppDiagLog {
     /// Future events will carry this value in `screen` until replaced.
     public static func setCurrentScreen(_ name: String?) {
         guard let runtime = state.runtime else { return }
-        safely("setCurrentScreen") {
-            runtime.currentScreen.set(name)
-        }
+        runtime.currentScreen.set(name)
     }
 
-    // MARK: - Export
+    // MARK: - Errors
 
+    public enum AppDiagLogError: Error, Sendable {
+        case notInitialized
+        case mcpClientNotConfigured
+    }
+
+    /// Lock-guarded mutable singleton state. Kept as a separate type so the enum
+    /// namespace stays pure-static.
+    private static let state = FacadeState()
+}
+
+// MARK: - Export
+extension AppDiagLog {
     /// Flush pending events, bundle every stored session into an encrypted ZIP, and
     /// invoke `completion` on a background task with the result. Callers must marshal
     /// to the main thread themselves if UI work is needed.
@@ -190,7 +229,7 @@ public enum AppDiagLog {
             completion(result)
         }
     }
-
+    
     /// Swift concurrency flavor of `export`. Prefer this in modern apps.
     public static func export() async -> ExportResult {
         guard let runtime = state.runtime else {
@@ -202,9 +241,10 @@ public enum AppDiagLog {
         await runtime.pipeline.flushOnce()
         return await runtime.exportManager.export()
     }
+}
 
-    // MARK: - MCP
-
+// MARK: - MCP
+extension AppDiagLog {
     /// Start the on-device MCP server (Server mode only).
     ///
     /// The server binds on the port and address set in `McpConfig.server(...)`.
@@ -214,10 +254,19 @@ public enum AppDiagLog {
     public static func startMcpServer() {
         guard let runtime = state.runtime else { return }
         Task.detached(priority: .utility) {
-            await safelyAsync("startMcpServer") {
-                await runtime.mcpServer?.start()
-            }
+            await runtime.startConfiguredMcpServer()
         }
+    }
+
+    /// Start the on-device MCP server with the provided runtime configuration.
+    ///
+    /// This is useful for sample apps and debug UIs where the user enters MCP options
+    /// after SDK initialization. If a server is already running, it is stopped and
+    /// restarted with the new config. Returns the effective bearer token.
+    @discardableResult
+    public static func startMcpServer(config: McpConfig) async -> String? {
+        guard let runtime = state.runtime else { return nil }
+        return await runtime.startMcpServer(config: config)
     }
 
     /// Stop the on-device MCP server and release its port.
@@ -226,9 +275,7 @@ public enum AppDiagLog {
     public static func stopMcpServer() {
         guard let runtime = state.runtime else { return }
         Task.detached(priority: .utility) {
-            await safelyAsync("stopMcpServer") {
-                await runtime.mcpServer?.stop()
-            }
+            await runtime.mcpServer?.stop()
         }
     }
 
@@ -277,26 +324,38 @@ public enum AppDiagLog {
         return await client.exportViaMcp()
     }
 
-    // MARK: - Errors
-
-    public enum AppDiagLogError: Error, Sendable {
-        case notInitialized
-        case mcpClientNotConfigured
+    /// Export encrypted sessions through a one-shot MCP client configuration.
+    ///
+    /// This avoids storing access tokens in SDK configuration and lets apps keep tokens
+    /// in process memory only.
+    public static func exportViaMcp(config: McpConfig) async -> McpExportResult {
+        guard let runtime = state.runtime else {
+            return .failure(
+                error: AppDiagLogError.notInitialized,
+                message: "AppDiagLog.initialize(config:) must be called before exportViaMcp(config:)"
+            )
+        }
+        return await runtime.exportViaMcp(config: config)
     }
-
-    // MARK: - Internal state holder
-
-    /// Lock-guarded mutable singleton state. Kept as a separate type so the enum
-    /// namespace stays pure-static.
-    private static let state = FacadeState()
 }
 
+// MARK: - Internal state holder
+
 /// Private state holder. Not exposed.
-final class FacadeState: @unchecked Sendable {
+final fileprivate class FacadeState: @unchecked Sendable {
+    private static let pendingLogLimit = 50
+
+    let sequenceGenerator = EventSequenceGenerator()
+
     private let lock = NSLock()
     private var _initialized = false
     private var _runtime: AppDiagLogRuntime?
     private var _registry: AutoTrackRegistry?
+    private var pendingLogs: [PendingLog] = []
+
+    init() {
+        pendingLogs.reserveCapacity(Self.pendingLogLimit)
+    }
 
     var runtime: AppDiagLogRuntime? {
         lock.lock(); defer { lock.unlock() }
@@ -312,13 +371,41 @@ final class FacadeState: @unchecked Sendable {
         _initialized = true
         return true
     }
-    func setRuntime(_ r: AppDiagLogRuntime) {
+
+    func setRuntime(_ r: AppDiagLogRuntime) -> [PendingLog] {
         lock.lock(); defer { lock.unlock() }
         _runtime = r
+        let logs = pendingLogs
+        pendingLogs.removeAll(keepingCapacity: true)
+        return logs
     }
+
     func setRegistry(_ r: AutoTrackRegistry) {
         lock.lock(); defer { lock.unlock() }
         _registry = r
+    }
+
+    func routeLog(event: String, level: LogLevel, properties: [String: String]) -> LogRoute {
+        lock.lock(); defer { lock.unlock() }
+        guard _initialized else {
+            return .discarded
+        }
+        if _runtime == nil, pendingLogs.count >= Self.pendingLogLimit {
+            return .discarded
+        }
+
+        let pending = PendingLog(
+            sequence: sequenceGenerator.next(),
+            event: event,
+            level: level,
+            properties: properties,
+            observedAt: Date()
+        )
+        if let runtime = _runtime {
+            return .runtime(runtime, pending)
+        }
+        pendingLogs.append(pending)
+        return .queued
     }
 }
 
@@ -335,13 +422,4 @@ private func safely(_ label: String, _ body: () -> Void) {
 @inline(__always)
 private func safelyAsync(_ label: String, _ body: () async -> Void) async {
     await body()
-}
-
-@inline(__always)
-private func safelyAsync(_ label: String, _ body: () async throws -> Void) async {
-    do {
-        try await body()
-    } catch {
-        SdkLog.warn("\(label) threw", error: error)
-    }
 }

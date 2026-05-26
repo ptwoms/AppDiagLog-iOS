@@ -2,9 +2,11 @@ import SwiftUI
 import AppDiagLog
 
 struct ExportView: View {
+    @AppStorage(SampleConfiguration.DefaultsKey.enableMcpClient) private var mcpClientEnabled = false
+    @ObservedObject private var mcpRuntime = SampleMcpRuntimeState.shared
     @State private var uploadURL = SampleConfiguration.uploadEndpoint
     @State private var bearerToken = SampleConfiguration.uploadBearerToken
-    @State private var statusMessages = ["Ready to export encrypted sessions."]
+    @State private var statusMessages = [LogEntry("Ready to export encrypted sessions.")]
     @State private var isWorking = false
 
     var body: some View {
@@ -27,10 +29,14 @@ struct ExportView: View {
                     } label: {
                         Label("Export via MCP", systemImage: "network.badge.shield.half.filled")
                     }
-                    .disabled(isWorking || !SampleConfiguration.enableMcpClient)
+                    .disabled(isWorking || !mcpClientEnabled)
 
-                    if !SampleConfiguration.enableMcpClient {
-                        Text("Enable SampleConfiguration.enableMcpClient to demo MCP export from this screen.")
+                    if !mcpClientEnabled {
+                        Text("Enable MCP client mode in Settings to use MCP export.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    } else if mcpRuntime.clientAuthToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        Text("Enter the MCP bearer token in Settings. The token is kept only until the app closes.")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
@@ -53,8 +59,8 @@ struct ExportView: View {
                 }
 
                 Section("Status") {
-                    ForEach(Array(statusMessages.enumerated()), id: \.offset) { _, message in
-                        Text(message)
+                    ForEach(statusMessages) { message in
+                        Text(message.message)
                             .font(.footnote.monospaced())
                             .textSelection(.enabled)
                     }
@@ -84,9 +90,21 @@ struct ExportView: View {
 
     @MainActor
     private func exportViaMcp() async {
+        let token = mcpRuntime.clientAuthToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !token.isEmpty else {
+            appendStatus("MCP export needs a bearer token. Enter it in Settings for this app session.")
+            return
+        }
+
         isWorking = true
         appendStatus("Starting MCP export.")
-        let result = await AppDiagLog.exportViaMcp()
+        let result = await AppDiagLog.exportViaMcp(
+            config: .client(
+                serverUrl: SampleConfiguration.sampleMcpClientURL,
+                authToken: token,
+                toolName: SampleConfiguration.sampleMcpClientToolName
+            )
+        )
 
         switch result {
         case .success(let sessionCount):
@@ -125,11 +143,6 @@ struct ExportView: View {
     }
 
     private func appendStatus(_ message: String) {
-        statusMessages.insert("\(timestamp())  \(message)", at: 0)
-        statusMessages = Array(statusMessages.prefix(20))
-    }
-
-    private func timestamp() -> String {
-        Date.now.formatted(date: .omitted, time: .standard)
+        statusMessages.append(message, maxEntries: 20)
     }
 }

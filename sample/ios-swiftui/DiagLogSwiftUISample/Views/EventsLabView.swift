@@ -112,19 +112,6 @@ struct EventsLabView: View {
     }
 
     private func appendAction(_ message: String) {
-        actionLog.insert(LogEntry("\(timestamp())  \(message)"), at: 0)
-        actionLog = Array(actionLog.prefix(20))
+        actionLog.append(message, maxEntries: 20)
     }
-
-    private func timestamp() -> String {
-        Date.now.formatted(date: .omitted, time: .standard)
-    }
-}
-
-// MARK: - Shared log entry
-
-private struct LogEntry: Identifiable {
-    let id = UUID()
-    let message: String
-    init(_ message: String) { self.message = message }
 }

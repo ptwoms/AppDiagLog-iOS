@@ -41,9 +41,21 @@ actor LogPipeline {
 
     /// Entry point from public API. Non-suspending from the caller's perspective: the
     /// AppDiagLog facade wraps this call in `Task.detached(priority: .utility)`.
-    func enqueue(event: String, level: LogLevel, props: [String: String]) async {
+    func enqueue(
+        event: String,
+        level: LogLevel,
+        props: [String: String],
+        observedAt: Date = Date(),
+        sequence: Int64? = nil
+    ) async {
         guard await rateLimiter.tryAcquire() else { return }
-        let envelope = factory.make(event: event, level: level, props: props)
+        let envelope = factory.make(
+            event: event,
+            level: level,
+            props: props,
+            observedAt: observedAt,
+            sequence: sequence
+        )
         let redacted = redaction.redact(envelope)
 
         // Per-session cap
@@ -86,18 +98,20 @@ actor LogPipeline {
         currentIdForCumulative = nil
     }
 
-    func handleSessionRotated() async {
+    func handleSessionRotated(resetSequence: Bool = true) async {
         cumulative.removeAll(keepingCapacity: true)
+        if resetSequence {
+            factory.resetForNewSession()
+        }
         currentIdForCumulative = await sessionManager.ensureSession()?.id
-        factory.resetForNewSession()
     }
 
     private func syncSessionIfNeeded() async {
         let active = await sessionManager.ensureSession()?.id
         if active != currentIdForCumulative {
             cumulative.removeAll(keepingCapacity: true)
-            currentIdForCumulative = active
             factory.resetForNewSession()
+            currentIdForCumulative = active
         }
     }
 }

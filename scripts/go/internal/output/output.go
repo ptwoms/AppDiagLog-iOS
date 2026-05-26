@@ -1,6 +1,6 @@
 // Package output writes decrypted events to disk in JSONL (one file per
 // session), CSV (combined sessions.csv + events.csv), combined JSONL (all
-// events sorted by timestamp into combined.jsonl), or XLSX (export.xlsx with
+// events with continuous sequence into combined.jsonl), or XLSX (export.xlsx with
 // Sessions and Events sheets) format.
 package output
 
@@ -54,7 +54,7 @@ func (j *jsonlWriter) Write(env envelope.Envelope, events []envelope.Event) erro
 	defer f.Close()
 	enc := json.NewEncoder(f)
 	enc.SetEscapeHTML(false)
-	for _, e := range events {
+	for _, e := range sortedEvents(events) {
 		if err := enc.Encode(e); err != nil {
 			return err
 		}
@@ -126,7 +126,7 @@ func (c *csvWriter) Write(env envelope.Envelope, events []envelope.Event) error 
 	}); err != nil {
 		return err
 	}
-	for _, e := range events {
+	for _, e := range sortedEvents(events) {
 		screen := ""
 		if e.Screen != nil {
 			screen = *e.Screen
@@ -167,7 +167,8 @@ func multiErr(errs ...error) error {
 // combinedEntry pairs an event with its originating session ID so that the
 // combined output file is self-contained.
 type combinedEntry struct {
-	SessionID string `json:"session_id"`
+	SessionID        string `json:"session_id"`
+	sessionCreatedAt string
 	envelope.Event
 }
 
@@ -178,15 +179,28 @@ type combinedWriter struct {
 
 func (c *combinedWriter) Write(env envelope.Envelope, events []envelope.Event) error {
 	for _, e := range events {
-		c.entries = append(c.entries, combinedEntry{SessionID: env.SessionID, Event: e})
+		c.entries = append(c.entries, combinedEntry{
+			SessionID:        env.SessionID,
+			sessionCreatedAt: env.CreatedAt,
+			Event:            e,
+		})
 	}
 	return nil
 }
 
-// Close sorts all collected events by timestamp (ISO-8601 strings are
-// lexicographically ordered) and writes them to combined.jsonl.
+// Close walks sessions in creation order, sorts by per-session sequence, and
+// writes a continuous combined sequence to combined.jsonl.
 func (c *combinedWriter) Close() error {
 	sort.Slice(c.entries, func(i, j int) bool {
+		if c.entries[i].sessionCreatedAt != c.entries[j].sessionCreatedAt {
+			return c.entries[i].sessionCreatedAt < c.entries[j].sessionCreatedAt
+		}
+		if c.entries[i].SessionID != c.entries[j].SessionID {
+			return c.entries[i].SessionID < c.entries[j].SessionID
+		}
+		if displaySeq(c.entries[i].Seq) != displaySeq(c.entries[j].Seq) {
+			return displaySeq(c.entries[i].Seq) < displaySeq(c.entries[j].Seq)
+		}
 		return c.entries[i].Ts < c.entries[j].Ts
 	})
 	if err := os.MkdirAll(c.outDir, 0o755); err != nil {
@@ -199,7 +213,8 @@ func (c *combinedWriter) Close() error {
 	defer f.Close()
 	enc := json.NewEncoder(f)
 	enc.SetEscapeHTML(false)
-	for _, e := range c.entries {
+	for i, e := range c.entries {
+		e.Seq = int64(i + 1)
 		if err := enc.Encode(e); err != nil {
 			return err
 		}
@@ -216,13 +231,14 @@ var (
 )
 
 type xlsxEventRow struct {
-	sessionID string
-	seq       int64
-	ts        string
-	level     string
-	eventName string
-	screen    string
-	props     string
+	sessionID        string
+	sessionCreatedAt string
+	seq              int64
+	ts               string
+	level            string
+	eventName        string
+	screen           string
+	props            string
 }
 
 type xlsxWriter struct {
@@ -257,33 +273,33 @@ func (x *xlsxWriter) Write(env envelope.Envelope, events []envelope.Event) error
 		}
 		props, _ := json.Marshal(e.Props)
 		x.eventRows = append(x.eventRows, xlsxEventRow{
-			sessionID: env.SessionID,
-			seq:       e.Seq,
-			ts:        e.Ts,
-			level:     e.Level,
-			eventName: e.Event,
-			screen:    screen,
-			props:     string(props),
+			sessionID:        env.SessionID,
+			sessionCreatedAt: env.CreatedAt,
+			seq:              e.Seq,
+			ts:               e.Ts,
+			level:            e.Level,
+			eventName:        e.Event,
+			screen:           screen,
+			props:            string(props),
 		})
 	}
 	return nil
 }
 
-// Close sorts event rows by timestamp then writes export.xlsx.
+// Close sorts event rows by session creation time and SDK per-session sequence,
+// then writes a continuous combined sequence to export.xlsx.
 func (x *xlsxWriter) Close() error {
-	// Sort by ts then seq. Boundary events use seq=-1; treat as MaxInt64 so
-	// they sort after real events that share the same timestamp.
-	sortSeq := func(s int64) int64 {
-		if s < 0 {
-			return 1<<63 - 1
-		}
-		return s
-	}
 	sort.Slice(x.eventRows, func(i, j int) bool {
-		if x.eventRows[i].ts != x.eventRows[j].ts {
-			return x.eventRows[i].ts < x.eventRows[j].ts
+		if x.eventRows[i].sessionCreatedAt != x.eventRows[j].sessionCreatedAt {
+			return x.eventRows[i].sessionCreatedAt < x.eventRows[j].sessionCreatedAt
 		}
-		return sortSeq(x.eventRows[i].seq) < sortSeq(x.eventRows[j].seq)
+		if x.eventRows[i].sessionID != x.eventRows[j].sessionID {
+			return x.eventRows[i].sessionID < x.eventRows[j].sessionID
+		}
+		if displaySeq(x.eventRows[i].seq) != displaySeq(x.eventRows[j].seq) {
+			return displaySeq(x.eventRows[i].seq) < displaySeq(x.eventRows[j].seq)
+		}
+		return x.eventRows[i].ts < x.eventRows[j].ts
 	})
 	if err := os.MkdirAll(x.outDir, 0o755); err != nil {
 		return err
@@ -315,7 +331,7 @@ func (x *xlsxWriter) Close() error {
 	}
 	for i, r := range x.eventRows {
 		cell, _ := excelize.CoordinatesToCellName(1, i+2)
-		row := []interface{}{r.sessionID, r.seq, r.ts, r.level, r.eventName, r.screen, r.props}
+		row := []interface{}{r.sessionID, int64(i + 1), r.ts, r.level, r.eventName, r.screen, r.props}
 		if err := f.SetSheetRow(sheetEvents, cell, &row); err != nil {
 			return err
 		}
@@ -339,6 +355,24 @@ func writeXlsxHeader(f *excelize.File, sheet string, headers []string) error {
 		}
 	}
 	return nil
+}
+
+func sortedEvents(events []envelope.Event) []envelope.Event {
+	out := append([]envelope.Event(nil), events...)
+	sort.Slice(out, func(i, j int) bool {
+		if displaySeq(out[i].Seq) != displaySeq(out[j].Seq) {
+			return displaySeq(out[i].Seq) < displaySeq(out[j].Seq)
+		}
+		return out[i].Ts < out[j].Ts
+	})
+	return out
+}
+
+func displaySeq(seq int64) int64 {
+	if seq < 0 {
+		return 1<<63 - 1
+	}
+	return seq
 }
 
 // satisfy io import for tooling consistency (unused once we go past Goimports).

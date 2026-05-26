@@ -72,6 +72,21 @@ final class McpJsonRpcTests: XCTestCase {
         XCTAssertNotNil(decoded.capabilities.tools)
     }
 
+    func testAnyJSONPreservesBooleansFromEncodedMcpCapabilities() throws {
+        let result = McpInitializeResult(
+            protocolVersion: mcpProtocolVersion,
+            capabilities: McpCapabilities(tools: McpToolsCapability(listChanged: false)),
+            serverInfo: McpServerInfo(name: "TestServer", version: "1.0")
+        )
+
+        let anyJSON = try encoder.anyJSON(result)
+        let data = try encoder.encode(anyJSON)
+        let payload = try XCTUnwrap(String(data: data, encoding: .utf8))
+
+        XCTAssertTrue(payload.contains("\"listChanged\":false"), payload)
+        XCTAssertFalse(payload.contains("\"listChanged\":0"), payload)
+    }
+
     func testMcpToolsListResultRoundTrip() throws {
         let tools = McpToolsListResult(tools: [
             McpTool(name: "list_sessions", description: "desc", inputSchema: McpToolInputSchema()),
@@ -107,6 +122,26 @@ final class McpJsonRpcTests: XCTestCase {
         let decoded = try decoder.decode(McpToolCallParams.self, from: data)
         XCTAssertEqual(decoded.name, "tag_session")
         XCTAssertEqual(decoded.arguments["label"]?.stringValue, "checkout crash")
+    }
+
+    func testJsonRpcRequestEncodesToolCallParams() throws {
+        let params = McpToolCallParams(
+            name: "submit_diagnostics",
+            arguments: ["data": AnyJSON("zip-base64")]
+        )
+        let req = JsonRpcRequest(
+            id: 2,
+            method: "tools/call",
+            params: try encoder.anyJSON(params)
+        )
+
+        let data = try encoder.encode(req)
+        let decoded = try decoder.decode(JsonRpcRequest.self, from: data)
+        let decodedParams = try XCTUnwrap(decoded.params?.dictValue)
+
+        XCTAssertEqual(decoded.method, "tools/call")
+        XCTAssertEqual(decodedParams["name"]?.stringValue, "submit_diagnostics")
+        XCTAssertEqual(decodedParams["arguments"]?.dictValue?["data"]?.stringValue, "zip-base64")
     }
 
     func testNotificationHasNoId() throws {

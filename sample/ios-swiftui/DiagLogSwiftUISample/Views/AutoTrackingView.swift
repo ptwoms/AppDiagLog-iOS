@@ -4,7 +4,7 @@ import AppDiagLog
 struct AutoTrackingView: View {
     @State private var showDetail = false
     @State private var networkStatus = "Idle"
-    @State private var actionLog = ["Screen tracking starts when this tab appears."]
+    @State private var actionLog = [LogEntry("Screen tracking starts when this tab appears.")]
 
     var body: some View {
         NavigationStack {
@@ -55,8 +55,8 @@ struct AutoTrackingView: View {
                 }
 
                 Section("Recent Actions") {
-                    ForEach(Array(actionLog.enumerated()), id: \.offset) { _, action in
-                        Text(action)
+                    ForEach(actionLog) { action in
+                        Text(action.message)
                             .font(.footnote.monospaced())
                     }
                 }
@@ -93,12 +93,7 @@ struct AutoTrackingView: View {
     }
 
     private func appendAction(_ message: String) {
-        actionLog.insert("\(timestamp())  \(message)", at: 0)
-        actionLog = Array(actionLog.prefix(12))
-    }
-
-    private func timestamp() -> String {
-        Date.now.formatted(date: .omitted, time: .standard)
+        actionLog.append(message)
     }
 }
 

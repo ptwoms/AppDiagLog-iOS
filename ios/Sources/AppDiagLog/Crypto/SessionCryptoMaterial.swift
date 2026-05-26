@@ -24,13 +24,13 @@ final class SessionCryptoMaterial: @unchecked Sendable {
         pqcProvider: PQCProvider
     ) throws -> SessionCryptoMaterial {
         let cipher = SymmetricCipherFactory.make(symmetric)
-        let dek = cipher.generateKey()
+        let dek = try cipher.generateKey()
         let wrapper = KemWrapperFactory.make(for: key, pqcProvider: pqcProvider)
         let wrapped = try wrapper.wrap(dek: dek, key: key)
         return SessionCryptoMaterial(dek: dek, wrapped: wrapped, keyId: key.keyId, cipher: cipher)
     }
 
     func wipe() {
-        for i in 0..<dek.count { dek[i] = 0 }
+        dek.wipe()
     }
 }

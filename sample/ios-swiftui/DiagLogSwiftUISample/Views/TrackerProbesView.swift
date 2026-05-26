@@ -136,12 +136,7 @@ struct TrackerProbesView: View {
     }
 
     private func appendAction(_ message: String) {
-        actionLog.insert(LogEntry("\(timestamp())  \(message)"), at: 0)
-        actionLog = Array(actionLog.prefix(12))
-    }
-
-    private func timestamp() -> String {
-        Date.now.formatted(date: .omitted, time: .standard)
+        actionLog.append(message)
     }
 }
 
@@ -153,7 +148,7 @@ private struct DeviceProbeInfo {
     let locale: String
     let timezone: String
 
-    static var current: DeviceProbeInfo {
+    @MainActor static var current: DeviceProbeInfo {
         let device = UIDevice.current
         return DeviceProbeInfo(
             os: "\(device.systemName) \(device.systemVersion)",
@@ -169,7 +164,7 @@ private struct BatteryProbeInfo {
     let state: String
     let thermal: String
 
-    static var current: BatteryProbeInfo {
+    @MainActor static var current: BatteryProbeInfo {
         UIDevice.current.isBatteryMonitoringEnabled = true
         let levelValue = UIDevice.current.batteryLevel
         let levelStr = levelValue >= 0 ? "\(Int(levelValue * 100))%" : "Unknown"
@@ -217,12 +212,4 @@ private struct MemProbeInfo {
             footprint: footprintMB > 0 ? "\(footprintMB) MB" : "Unavailable"
         )
     }
-}
-
-// MARK: - Shared log entry
-
-private struct LogEntry: Identifiable {
-    let id = UUID()
-    let message: String
-    init(_ message: String) { self.message = message }
 }

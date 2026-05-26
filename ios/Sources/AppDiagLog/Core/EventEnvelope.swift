@@ -11,7 +11,7 @@ public enum LogLevel: String, Codable, Sendable {
 /// A single diagnostic event.
 ///
 /// Matches the backend schema exactly. Fields:
-/// - `seq`: monotonic per session (our ordering source of truth)
+/// - `seq`: monotonic per-session log order (combined outputs may rewrite it)
 /// - `ts`: ISO-8601 UTC observation timestamp
 /// - `props`: always `[String: String]` — no nested objects
 public struct EventEnvelope: Codable, Sendable, Equatable {

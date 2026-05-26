@@ -94,17 +94,19 @@ class SessionIngestor(
             deviceMetadata = envelope.deviceMetadata.toMap(),
         )
 
-        val rawEvents = parsed.map { ev ->
-            DecryptedEvent(
-                sessionId = envelope.sessionId,
-                seq = ev.seq,
-                ts = ev.ts,
-                screen = ev.screen,
-                event = ev.event,
-                level = ev.level,
-                props = ev.props,
-            )
-        }
+        val rawEvents = parsed
+            .sortedBy { it.seq }
+            .map { ev ->
+                DecryptedEvent(
+                    sessionId = envelope.sessionId,
+                    seq = ev.seq,
+                    ts = ev.ts,
+                    screen = ev.screen,
+                    event = ev.event,
+                    level = ev.level,
+                    props = ev.props,
+                )
+            }
 
         val events = withBoundaries(envelope, rawEvents)
         store.persistSession(session, events)
@@ -114,7 +116,10 @@ class SessionIngestor(
     /**
      * Injects session_start and session_end boundary events.
      *
-     * Boundary events use seq = -1 so they are identifiable programmatically.
+     * Boundary events get reserved sequence positions around SDK events:
+     * session_start uses seq=0, while session_end uses max(raw seq)+1. SDK events
+     * start at seq=1, so read paths can sort by seq without pushing boundaries
+     * together at the end of the session.
      */
     private fun withBoundaries(
         envelope: SessionEnvelope,
@@ -127,7 +132,7 @@ class SessionIngestor(
 
         val startEvent = DecryptedEvent(
             sessionId = envelope.sessionId,
-            seq = -1L,
+            seq = 0L,
             ts = envelope.createdAt,
             screen = null,
             event = "session_start",
@@ -140,12 +145,13 @@ class SessionIngestor(
             ?: envelope.createdAt
 
         val endProps = mutableMapOf("event_count" to rawEvents.size.toString())
+        val endSeq = (rawEvents.maxOfOrNull { it.seq } ?: 0L) + 1L
         val tail = mutableListOf<DecryptedEvent>()
 
         if (hasCleanSeal) {
             tail += DecryptedEvent(
                 sessionId = envelope.sessionId,
-                seq = -1L,
+                seq = endSeq,
                 ts = envelope.sealedAt!!,
                 screen = null,
                 event = "session_end",
@@ -156,7 +162,7 @@ class SessionIngestor(
             endProps["sealed"] = "false"
             tail += DecryptedEvent(
                 sessionId = envelope.sessionId,
-                seq = -1L,
+                seq = endSeq,
                 ts = endTs,
                 screen = null,
                 event = "session_end",

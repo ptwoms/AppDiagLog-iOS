@@ -9,7 +9,7 @@ struct AutoTrackingView: View {
 
     @StateObject private var connectivityObserver = ConnectivityObserver()
     @State private var networkStatus = "Idle"
-    @State private var actionLog = ["UIKit screen tracking starts when this tab appears."]
+    @State private var actionLog = [LogEntry("UIKit screen tracking starts when this tab appears.")]
 
     var body: some View {
         List {
@@ -65,8 +65,8 @@ struct AutoTrackingView: View {
             }
 
             Section("Recent Actions") {
-                ForEach(Array(actionLog.enumerated()), id: \.offset) { _, action in
-                    Text(action)
+                ForEach(actionLog) {
+                    Text($0.message)
                         .font(.footnote.monospaced())
                 }
             }
@@ -97,12 +97,7 @@ struct AutoTrackingView: View {
     }
 
     private func appendAction(_ message: String) {
-        actionLog.insert("\(timestamp())  \(message)", at: 0)
-        actionLog = Array(actionLog.prefix(12))
-    }
-
-    private func timestamp() -> String {
-        Date().formatted(date: .omitted, time: .standard)
+        actionLog.append(message)
     }
 }
 

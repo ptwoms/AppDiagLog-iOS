@@ -63,7 +63,7 @@ actor AutoTrackRegistry {
     }
 
     private func emitDeviceSnapshot() async {
-        let snapshot = DeviceSnapshot.capture()
+        let snapshot = await DeviceSnapshot.capture()
         await runtime.pipeline.enqueue(
             event: EventName.deviceSnapshot,
             level: .info,

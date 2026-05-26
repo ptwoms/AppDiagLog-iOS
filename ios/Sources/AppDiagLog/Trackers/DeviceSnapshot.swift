@@ -11,13 +11,17 @@ import UIKit
 enum DeviceSnapshot {
     /// Returns an ordered dictionary-shaped `[String: String]`. Values are Strings only —
     /// matches the event `props` schema and keeps serialization trivial.
-    static func capture() -> [String: String] {
+    static func capture() async -> [String: String] {
         var map: [String: String] = [:]
         map.reserveCapacity(16)
 
         #if os(iOS) || os(tvOS)
-        map["os"] = "iOS \(UIDevice.current.systemVersion)"
-        map["model"] = UIDevice.current.model
+        await MainActor.run {
+            let curDevice = UIDevice.current
+            map["os"] = "iOS \(curDevice.systemVersion)"
+            map["model"] = curDevice.model
+            map["night_mode"] = (UITraitCollection.current.userInterfaceStyle == .dark) ? "yes" : "no"
+        }
         map["device"] = deviceIdentifier()
         #elseif os(macOS)
         let v = ProcessInfo.processInfo.operatingSystemVersion
@@ -37,14 +41,7 @@ enum DeviceSnapshot {
 
         map["locale"] = Locale.current.identifier
         map["timezone"] = TimeZone.current.identifier
-        map["sdk_version"] = AppDiagLogRuntime.sdkVersion
-
-        #if os(iOS) || os(tvOS)
-        if Thread.isMainThread {
-            // Only safe on main thread — capture what we can without hopping.
-            map["night_mode"] = (UITraitCollection.current.userInterfaceStyle == .dark) ? "yes" : "no"
-        }
-        #endif
+        map["sdk_version"] = AppDiagLog.sdkVersion
 
         // Free disk
         if let freeBytes = try? URL(fileURLWithPath: NSHomeDirectory())

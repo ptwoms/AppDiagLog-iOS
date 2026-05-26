@@ -41,6 +41,13 @@ class IngestTokenFilter(
         response: HttpServletResponse,
         filterChain: FilterChain,
     ) {
+        applyCorsHeaders(request, response)
+
+        if (request.method.equals("OPTIONS", ignoreCase = true)) {
+            response.status = HttpServletResponse.SC_NO_CONTENT
+            return
+        }
+
         val auth = request.getHeader("Authorization")
         val provided = auth?.removePrefix("Bearer ")?.trim().orEmpty()
         if (!constantTimeEquals(provided.toByteArray(Charsets.UTF_8), expectedBytes)) {
@@ -51,6 +58,20 @@ class IngestTokenFilter(
             return
         }
         filterChain.doFilter(request, response)
+    }
+
+    private fun applyCorsHeaders(request: HttpServletRequest, response: HttpServletResponse) {
+        val origin = request.getHeader("Origin") ?: return
+        response.setHeader("Access-Control-Allow-Origin", origin)
+        response.setHeader("Vary", "Origin")
+        response.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS")
+        response.setHeader(
+            "Access-Control-Allow-Headers",
+            request.getHeader("Access-Control-Request-Headers")
+                ?: "Content-Type, Authorization, MCP-Protocol-Version, MCP-Session-Id",
+        )
+        response.setHeader("Access-Control-Expose-Headers", "MCP-Protocol-Version, MCP-Session-Id")
+        response.setHeader("Access-Control-Max-Age", "600")
     }
 
     private fun constantTimeEquals(a: ByteArray, b: ByteArray): Boolean {

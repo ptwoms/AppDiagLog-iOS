@@ -6,6 +6,11 @@ struct SessionIndex: Codable, Sendable {
     var maxSessions: Int
     var sessions: [Entry] = []
 
+    init(maxSessions: Int, sessions: [Entry] = []) {
+        self.maxSessions = maxSessions
+        self.sessions = sessions
+    }
+
     struct Entry: Codable, Sendable, Equatable {
         var id: String
         var createdAt: String

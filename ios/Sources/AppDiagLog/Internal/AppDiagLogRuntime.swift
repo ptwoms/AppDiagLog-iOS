@@ -3,41 +3,50 @@ import Foundation
 /// Holds the constructed SDK dependency graph. Built once by `AppDiagLog.initialize`.
 /// Wrapped as a class so we can publish it atomically.
 final class AppDiagLogRuntime: @unchecked Sendable {
-    static let sdkVersion = "1.0.0"
 
     let config: AppDiagLogConfig
+    let indexStore: SessionIndexStore
     let pipeline: LogPipeline
     let sessionManager: SessionManager
     let exportManager: ExportManager
     let sessionIdHolder: SessionIdHolder
     let currentScreen: CurrentScreenHolder
     let factory: EventFactory
-    let mcpServer: AppDiagLogMcpServer?
-    let mcpClient: AppDiagLogMcpClient?
+    let sequenceGenerator: EventSequenceGenerator
+    private(set) var mcpServer: AppDiagLogMcpServer?
+    private(set) var mcpClient: AppDiagLogMcpClient?
 
     init(
         config: AppDiagLogConfig,
+        indexStore: SessionIndexStore,
         pipeline: LogPipeline,
         sessionManager: SessionManager,
         exportManager: ExportManager,
         sessionIdHolder: SessionIdHolder,
         currentScreen: CurrentScreenHolder,
         factory: EventFactory,
+        sequenceGenerator: EventSequenceGenerator,
         mcpServer: AppDiagLogMcpServer?,
         mcpClient: AppDiagLogMcpClient?
     ) {
         self.config = config
+        self.indexStore = indexStore
         self.pipeline = pipeline
         self.sessionManager = sessionManager
         self.exportManager = exportManager
         self.sessionIdHolder = sessionIdHolder
         self.currentScreen = currentScreen
         self.factory = factory
+        self.sequenceGenerator = sequenceGenerator
         self.mcpServer = mcpServer
         self.mcpClient = mcpClient
     }
 
-    static func make(config: AppDiagLogConfig, pqcProvider: PQCProvider) -> AppDiagLogRuntime {
+    static func make(
+        config: AppDiagLogConfig,
+        pqcProvider: PQCProvider,
+        sequenceGenerator: EventSequenceGenerator = EventSequenceGenerator()
+    ) async -> AppDiagLogRuntime {
         SdkLog.enabled = config.debugLogging
         let urls = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
         let root = urls.first ?? FileManager.default.temporaryDirectory
@@ -55,7 +64,8 @@ final class AppDiagLogRuntime: @unchecked Sendable {
         let screenHolder = CurrentScreenHolder()
         let factory = EventFactory(
             sessionIdProvider: { sessionIdHolder.get() },
-            screenProvider: { screenHolder.get() }
+            screenProvider: { screenHolder.get() },
+            sequenceGenerator: sequenceGenerator
         )
 
         let sessionManager = SessionManager(
@@ -64,7 +74,7 @@ final class AppDiagLogRuntime: @unchecked Sendable {
             indexStore: indexStore,
             fileWriter: fileWriter,
             eviction: eviction,
-            deviceMetadata: { DeviceSnapshot.capture() },
+            deviceMetadata: { await DeviceSnapshot.capture() },
             sessionIdHolder: sessionIdHolder
         )
 
@@ -103,7 +113,7 @@ final class AppDiagLogRuntime: @unchecked Sendable {
         let exportManager = ExportManager(
             paths: paths,
             indexStore: indexStore,
-            sdkVersion: sdkVersion
+            sdkVersion: AppDiagLog.sdkVersion
         )
 
         // ─── MCP wiring (optional) ───────────────────────────────────────────
@@ -118,7 +128,7 @@ final class AppDiagLogRuntime: @unchecked Sendable {
                     exportManager: exportManager,
                     pipeline: pipeline,
                     sessionManager: sessionManager,
-                    sdkVersion: sdkVersion
+                    sdkVersion: AppDiagLog.sdkVersion
                 )
                 mcpClient = nil
             case .client:
@@ -127,7 +137,7 @@ final class AppDiagLogRuntime: @unchecked Sendable {
                     config: mcpCfg,
                     pipeline: pipeline,
                     exportManager: exportManager,
-                    sdkVersion: sdkVersion
+                    sdkVersion: AppDiagLog.sdkVersion
                 )
             }
         } else {
@@ -137,14 +147,54 @@ final class AppDiagLogRuntime: @unchecked Sendable {
 
         return AppDiagLogRuntime(
             config: config,
+            indexStore: indexStore,
             pipeline: pipeline,
             sessionManager: sessionManager,
             exportManager: exportManager,
             sessionIdHolder: sessionIdHolder,
             currentScreen: screenHolder,
             factory: factory,
+            sequenceGenerator: sequenceGenerator,
             mcpServer: mcpServer,
             mcpClient: mcpClient
         )
+    }
+
+    func startConfiguredMcpServer() async {
+        await mcpServer?.start()
+    }
+
+    func startMcpServer(config: McpConfig) async -> String? {
+        guard case .server = config else { return nil }
+
+        if let mcpServer {
+            await mcpServer.stop()
+        }
+
+        let server = AppDiagLogMcpServer(
+            config: config,
+            indexStore: indexStore,
+            exportManager: exportManager,
+            pipeline: pipeline,
+            sessionManager: sessionManager,
+            sdkVersion: AppDiagLog.sdkVersion
+        )
+        mcpServer = server
+        await server.start()
+        return server.token
+    }
+
+    func exportViaMcp(config: McpConfig) async -> McpExportResult {
+        guard case .client = config else {
+            return .failure(error: AppDiagLog.AppDiagLogError.mcpClientNotConfigured, message: "McpConfig.client required")
+        }
+
+        let client = AppDiagLogMcpClient(
+            config: config,
+            pipeline: pipeline,
+            exportManager: exportManager,
+            sdkVersion: AppDiagLog.sdkVersion
+        )
+        return await client.exportViaMcp()
     }
 }
