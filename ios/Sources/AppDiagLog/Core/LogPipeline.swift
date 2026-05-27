@@ -48,7 +48,10 @@ actor LogPipeline {
         observedAt: Date = Date(),
         sequence: Int64? = nil
     ) async {
-        guard await rateLimiter.tryAcquire() else { return }
+        guard await rateLimiter.tryAcquire() else {
+            SdkLog.warn("rate limit: '\(event)' dropped")
+            return
+        }
         let envelope = factory.make(
             event: event,
             level: level,
@@ -61,15 +64,17 @@ actor LogPipeline {
         // Per-session cap
         if cumulative.count >= config.maxEventsPerSession {
             droppedForSessionCap &+= 1
+            SdkLog.warn("session cap (\(config.maxEventsPerSession)) reached: '\(event)' dropped")
             return
         }
 
         switch await buffer.append(redacted) {
         case .accepted(_, let shouldFlush):
+            SdkLog.debug("enqueued '\(event)' =\(level)= props:\(redacted.props)")
             if shouldFlush { await flusher.flushNow() }
             else { await flusher.schedule() }
-        case .dropped:
-            break
+        case .dropped(let total):
+            SdkLog.warn("buffer overflow: '\(event)' dropped (total overflow=\(total))")
         }
     }
 
@@ -77,7 +82,12 @@ actor LogPipeline {
         let drain = await buffer.drain()
         await syncSessionIfNeeded()
 
+        if drain.droppedSinceLastDrain > 0 {
+            SdkLog.warn("flush: \(drain.droppedSinceLastDrain) event(s) lost to buffer overflow")
+        }
+
         if !drain.events.isEmpty {
+            SdkLog.debug("flush: persisting \(drain.events.count) event(s) (session total=\(cumulative.count + drain.events.count))")
             let spaceLeft = config.maxEventsPerSession - cumulative.count
             if spaceLeft >= drain.events.count {
                 cumulative.append(contentsOf: drain.events)
@@ -92,6 +102,7 @@ actor LogPipeline {
     }
 
     func shutdown() async {
+        SdkLog.debug("pipeline shutdown: flushing \(cumulative.count) event(s)")
         await flusher.flushNow()
         await sessionManager.sealCurrent(pending: cumulative)
         cumulative.removeAll(keepingCapacity: true)
@@ -99,6 +110,7 @@ actor LogPipeline {
     }
 
     func handleSessionRotated(resetSequence: Bool = true) async {
+        SdkLog.debug("pipeline: session rotated")
         cumulative.removeAll(keepingCapacity: true)
         if resetSequence {
             factory.resetForNewSession()

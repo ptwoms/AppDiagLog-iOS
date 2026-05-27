@@ -84,9 +84,7 @@ actor ExportManager {
     enum ExportError: Error { case nothingToExport }
 
     private lazy var nowDateFormatter: ISO8601DateFormatter = {
-        let fmt = ISO8601DateFormatter()
-        fmt.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return fmt
+        Date.isoDateFormatter
     }()
 
     private var nowIso: String {

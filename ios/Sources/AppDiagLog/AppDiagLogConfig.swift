@@ -63,9 +63,58 @@ public struct AppDiagLogConfig: Sendable {
     }
 }
 
+/// The set of permission types that `PermissionChangeTracker` can monitor.
+public enum TrackedPermission: CaseIterable, Sendable {
+    case camera
+    case microphone
+    case photos
+    case location
+    case notifications
+    case contacts
+    case calendar
+    case reminders
+    case speechRecognition
+    case motionFitness
+    case appTracking
+}
+
+/// Controls when `PermissionChangeTracker` re-snapshots authorization statuses.
+///
+/// - `willEnterForeground`: fires once per foreground transition. Catches changes made
+///   in the iOS Settings app. Lower frequency.
+/// - `didBecomeActive`: fires on every active transition, including after an in-app
+///   permission alert is dismissed. Also catches changes from Settings. Higher frequency
+///   but status reads are cheap so overhead remains negligible.
+public enum PermissionCheckTrigger: Sendable {
+    case willEnterForeground
+    case didBecomeActive
+}
+
+/// Specifies which permission types `PermissionChangeTracker` monitors.
+///
+/// Pass `nil` for `permissionChanges` in `AutoTrackConfig` to disable the tracker entirely.
+/// Use `PermissionTrackConfig(permissions: [...])` to monitor only a subset.
+public struct PermissionTrackConfig: Sendable {
+    public let permissions: Set<TrackedPermission>
+    public let trigger: PermissionCheckTrigger
+
+    /// Monitors all available permission types, triggered on foreground.
+    public static let all = PermissionTrackConfig()
+
+    public init(
+        permissions: Set<TrackedPermission> = Set(TrackedPermission.allCases),
+        trigger: PermissionCheckTrigger = .willEnterForeground
+    ) {
+        self.permissions = permissions
+        self.trigger = trigger
+    }
+}
+
 public struct AutoTrackConfig: Sendable {
     public let appLifecycle: Bool
-    public let screenViews: Bool
+    /// Controls automatic screen-view tracking. Pass `nil` to disable automatic
+    /// tracking while keeping explicit SwiftUI `.trackScreen(_:)` calls available.
+    public let screenViews: ScreenTrackingMode?
     public let taps: Bool
     public let apiCalls: Bool
     public let crashes: Bool
@@ -74,7 +123,7 @@ public struct AutoTrackConfig: Sendable {
     public let deviceSnapshot: Bool
     public let memoryPressure: Bool
     public let batteryThermal: Bool
-    public let permissionChanges: Bool
+    public let permissionChanges: PermissionTrackConfig?
     public let pushNotifications: Bool
     public let webViews: Bool
     public let backgroundTasks: Bool
@@ -82,7 +131,7 @@ public struct AutoTrackConfig: Sendable {
 
     public init(
         appLifecycle: Bool = true,
-        screenViews: Bool = true,
+        screenViews: ScreenTrackingMode? = .automatic(),
         taps: Bool = true,
         apiCalls: Bool = true,
         crashes: Bool = true,
@@ -91,7 +140,7 @@ public struct AutoTrackConfig: Sendable {
         deviceSnapshot: Bool = true,
         memoryPressure: Bool = true,
         batteryThermal: Bool = true,
-        permissionChanges: Bool = true,
+        permissionChanges: PermissionTrackConfig? = nil,
         pushNotifications: Bool = false,
         webViews: Bool = false,
         backgroundTasks: Bool = false,
@@ -112,6 +161,115 @@ public struct AutoTrackConfig: Sendable {
         self.webViews = webViews
         self.backgroundTasks = backgroundTasks
         self.preferenceChanges = preferenceChanges
+    }
+}
+
+/// Selects how automatic `screen_view` events are named.
+public enum ScreenTrackingMode: Sendable {
+    /// Infer screens from visible controller names after applying framework/container
+    /// filters. This is useful for quick setup and UIKit-heavy apps.
+    case automatic(AutomaticScreenTrackConfig = AutomaticScreenTrackConfig())
+    /// Log only views/controllers that provide an accessibility identifier accepted by
+    /// the supplied config. Missing identifiers produce no screen event.
+    case accessibilityIdentifier(AccessibilityIdentifierScreenTrackConfig = AccessibilityIdentifierScreenTrackConfig())
+}
+
+/// Controls which view-controller class names are allowed to emit automatic
+/// inferred `screen_view` events from the UIKit `viewDidAppear(_:)` swizzle.
+///
+/// This is intentionally based on class-name strings rather than UIKit types so the
+/// core configuration remains portable across package build targets. For pure SwiftUI
+/// apps, prefer `AutoTrackConfig(screenViews: nil)` and annotate meaningful views
+/// with `.trackScreen("Checkout")`.
+public struct AutomaticScreenTrackConfig: Sendable {
+    public static let defaultIgnoredControllerNames: Set<String> = [
+        "UIAlertController",
+        "UICompatibilityInputViewController",
+        "UIInputViewController",
+        "UINavigationController",
+        "UIPageViewController",
+        "UISplitViewController",
+        "UISystemInputAssistantViewController",
+        "UITabBarController",
+        "UIHostingController",
+        "TabHostingController"
+    ]
+
+    public static let defaultIgnoredControllerNamePrefixes: [String] = [
+        "_",
+        "SwiftUI.",
+        "UIHostingController<",
+        "NavigationStackHostingController<",
+        "PresentationHostingController<",
+        "TabHostingController<"
+    ]
+
+    public let enabled: Bool
+    public let ignoredControllerNames: Set<String>
+    public let ignoredControllerNamePrefixes: [String]
+    public let allowedControllerNamePrefixes: [String]
+    public let shouldTrackControllerName: (@Sendable (String) -> Bool)?
+
+    public init(
+        enabled: Bool = true,
+        ignoredControllerNames: Set<String> = AutomaticScreenTrackConfig.defaultIgnoredControllerNames,
+        ignoredControllerNamePrefixes: [String] = AutomaticScreenTrackConfig.defaultIgnoredControllerNamePrefixes,
+        allowedControllerNamePrefixes: [String] = [],
+        shouldTrackControllerName: (@Sendable (String) -> Bool)? = nil
+    ) {
+        self.enabled = enabled
+        self.ignoredControllerNames = ignoredControllerNames
+        self.ignoredControllerNamePrefixes = ignoredControllerNamePrefixes
+        self.allowedControllerNamePrefixes = allowedControllerNamePrefixes
+        self.shouldTrackControllerName = shouldTrackControllerName
+    }
+
+    func shouldTrack(controllerName name: String) -> Bool {
+        guard enabled else { return false }
+        guard !ignoredControllerNames.contains(name) else { return false }
+        guard !ignoredControllerNamePrefixes.contains(where: { name.hasPrefix($0) }) else { return false }
+
+        if !allowedControllerNamePrefixes.isEmpty {
+            guard allowedControllerNamePrefixes.contains(where: { name.hasPrefix($0) }) else {
+                return false
+            }
+        }
+
+        if let shouldTrackControllerName {
+            return shouldTrackControllerName(name)
+        }
+
+        return true
+    }
+}
+
+/// Controls screen tracking by accessibility identifier.
+///
+/// Use a prefix such as `"screen."` when the app already uses accessibility
+/// identifiers for controls and test hooks, so element IDs are not mistaken for screens.
+public struct AccessibilityIdentifierScreenTrackConfig: Sendable {
+    public let requiredPrefix: String?
+    public let shouldTrackIdentifier: (@Sendable (String) -> Bool)?
+
+    public init(
+        requiredPrefix: String? = nil,
+        shouldTrackIdentifier: (@Sendable (String) -> Bool)? = nil
+    ) {
+        self.requiredPrefix = requiredPrefix
+        self.shouldTrackIdentifier = shouldTrackIdentifier
+    }
+
+    func shouldTrack(identifier: String) -> Bool {
+        guard !identifier.isEmpty else { return false }
+
+        if let requiredPrefix, !identifier.hasPrefix(requiredPrefix) {
+            return false
+        }
+
+        if let shouldTrackIdentifier {
+            return shouldTrackIdentifier(identifier)
+        }
+        return true
     }
 }
 

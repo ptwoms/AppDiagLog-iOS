@@ -32,7 +32,7 @@ final class FacadeStateTests: XCTestCase {
                 keyWrap: .mlKem768(keyId: "test-key", publicKey: Data(repeating: 0xAB, count: 1184)),
                 autoTrack: AutoTrackConfig(
                     appLifecycle: false,
-                    screenViews: false,
+                    screenViews: nil,
                     taps: false,
                     apiCalls: false,
                     crashes: false,

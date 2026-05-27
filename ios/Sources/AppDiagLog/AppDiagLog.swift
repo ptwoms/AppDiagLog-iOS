@@ -68,9 +68,21 @@ public enum AppDiagLog {
                 sequenceGenerator: state.sequenceGenerator
             )
 
-            await runtime.sessionManager.bootstrap()
+            let recoveredSessionIds = await runtime.sessionManager.bootstrap()
             _ = await runtime.sessionManager.ensureSession()
             await runtime.pipeline.handleSessionRotated(resetSequence: false)
+            if let crashMarker = runtime.crashMarkerStore.consume() {
+                var props = crashMarker.eventProperties
+                if let previousSessionId = recoveredSessionIds.last {
+                    props["previous_session_id"] = previousSessionId
+                }
+                await runtime.pipeline.enqueue(
+                    event: EventName.crash,
+                    level: .error,
+                    props: props
+                )
+                await runtime.pipeline.flushOnce()
+            }
             let pendingLogs = state.setRuntime(runtime)
             await replay(pendingLogs, into: runtime)
             

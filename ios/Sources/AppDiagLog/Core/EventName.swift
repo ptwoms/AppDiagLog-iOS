@@ -17,7 +17,11 @@ public enum EventName {
     public static let battery           = "battery_change"
     public static let thermal           = "thermal_change"
     public static let permissionChange  = "permission_change"
+    public static let permissionSnapshot = "permission_snapshot"
     public static let push              = "push"
     public static let deviceSnapshot    = "device_snapshot"
     public static let sdkInternal       = "sdk_internal"
+    public static let webView           = "web_view"
+    public static let backgroundTask    = "background_task"
+    public static let preferenceChange  = "preference_change"
 }

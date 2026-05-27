@@ -30,11 +30,7 @@ final class EventFactory: @unchecked Sendable {
     private let screenProvider: @Sendable () -> String?
     private let sequenceGenerator: EventSequenceGenerator
 
-    private let isoFormatter: ISO8601DateFormatter = {
-        let fmt = ISO8601DateFormatter()
-        fmt.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return fmt
-    }()
+    private let isoFormatter = Date.isoDateFormatter
 
     init(
         sessionIdProvider: @escaping @Sendable () -> String?,

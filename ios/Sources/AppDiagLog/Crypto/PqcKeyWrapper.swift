@@ -33,12 +33,12 @@ public struct SystemPQCProvider: PQCProvider {
     public init() {}
 
     public var isAvailable: Bool {
-        if #available(iOS 26.0, *) { return true }
+        if #available(iOS 26.0, macOS 26.0, *) { return true }
         return false
     }
 
     public func encapsulate(publicKey: Data) throws -> (kemCiphertext: Data, sharedSecret: Data) {
-        if #available(iOS 26.0, *) {
+        if #available(iOS 26.0, macOS 26.0, *) {
             let pk = try MLKEM768.PublicKey(rawRepresentation: publicKey)
             let enc = try pk.encapsulate()
             return (enc.encapsulated, enc.sharedSecret.withUnsafeBytes({ Data($0) }))
@@ -47,7 +47,7 @@ public struct SystemPQCProvider: PQCProvider {
     }
 
     public func decapsulate(privateKey: Data, kemCiphertext: Data) throws -> Data {
-        if #available(iOS 26.0, *) {
+        if #available(iOS 26.0, macOS 26.0, *) {
             let shared = try MLKEM768.PrivateKey(integrityCheckedRepresentation: privateKey)
                 .decapsulate(kemCiphertext)
             return shared.withUnsafeBytes({ Data($0) })

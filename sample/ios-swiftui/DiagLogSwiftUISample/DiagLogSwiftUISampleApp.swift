@@ -59,7 +59,7 @@ enum SampleConfiguration {
 
     static let autoTrack = AutoTrackConfig(
         appLifecycle: true,
-        screenViews: true,
+        screenViews: nil,
         taps: true,
         apiCalls: true,
         crashes: true,
@@ -68,7 +68,7 @@ enum SampleConfiguration {
         deviceSnapshot: true,
         memoryPressure: true,
         batteryThermal: true,
-        permissionChanges: true,
+        permissionChanges: PermissionTrackConfig(permissions: Set(TrackedPermission.allCases), trigger: .didBecomeActive),
         pushNotifications: true,
         webViews: true,
         backgroundTasks: true,
@@ -139,6 +139,7 @@ final class SampleMcpRuntimeState: ObservableObject {
 struct DiagLogSwiftUISampleApp: App {
     init() {
         AppDiagLog.initialize(config: SampleConfiguration.sdkConfig)
+        NotificationHandler.shared.setup()
     }
 
     var body: some Scene {

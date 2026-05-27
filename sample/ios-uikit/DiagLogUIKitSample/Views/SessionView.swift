@@ -1,10 +1,14 @@
 import Foundation
 import SwiftUI
 import AppDiagLog
+#if canImport(Darwin)
+import Darwin
+#endif
 
 struct SessionView: View {
     @State private var sessionTag = "session-lab-repro"
     @State private var sessionInfo = UIKitSessionInspectInfo.read()
+    @State private var pendingCrash: UIKitSampleCrashScenario?
     @State private var statusLog = [LogEntry("Session lab ready.")]
 
     var body: some View {
@@ -60,14 +64,25 @@ struct SessionView: View {
             }
 
             Section("Crash Simulation") {
-                Text("Throws a fatal error to exercise the crash tracker. The app terminates immediately. On the next launch the SDK seals the crashed session retroactively — worst-case data loss is one flush buffer (≤50 events / 5 s).")
+                Text("Each action terminates the app immediately. On the next launch the SDK records a crash event with source=previous_app_close and seals the prior session retroactively.")
                     .font(.footnote)
                     .foregroundColor(.secondary)
 
-                Button(role: .destructive) {
-                    fatalError("Sample crash — triggered from UIKit SessionView")
-                } label: {
-                    Label("Simulate Crash (app will die)", systemImage: "exclamationmark.octagon")
+                ForEach(UIKitSampleCrashScenario.allCases) { scenario in
+                    Button(role: .destructive) {
+                        pendingCrash = scenario
+                    } label: {
+                        Label {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(scenario.title)
+                                Text(scenario.detail)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                        } icon: {
+                            Image(systemName: scenario.icon)
+                        }
+                    }
                 }
             }
 
@@ -85,6 +100,25 @@ struct SessionView: View {
             }
         }
         .listStyle(.insetGrouped)
+        .confirmationDialog(
+            "Trigger crash?",
+            isPresented: Binding(
+                get: { pendingCrash != nil },
+                set: { isPresented in
+                    if !isPresented { pendingCrash = nil }
+                }
+            ),
+            titleVisibility: .visible
+        ) {
+            if let pendingCrash {
+                Button(pendingCrash.title, role: .destructive) {
+                    pendingCrash.trigger()
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Relaunch the app after it terminates to let the SDK record the previous app close.")
+        }
     }
 
     private func configRow(_ title: String, _ value: String) -> some View {
@@ -103,6 +137,91 @@ struct SessionView: View {
 
     private func appendStatus(_ message: String) {
         statusLog.append(message)
+    }
+}
+
+private enum UIKitSampleCrashScenario: String, CaseIterable, Identifiable {
+    case swiftFatalError
+    case nsException
+    case sigabrt
+    case sigtrap
+    case sigsegv
+    case sigill
+    case sigbus
+    case sigfpe
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .swiftFatalError: return "Swift fatalError"
+        case .nsException: return "Objective-C NSException"
+        case .sigabrt: return "Raise SIGABRT"
+        case .sigtrap: return "Raise SIGTRAP"
+        case .sigsegv: return "Raise SIGSEGV"
+        case .sigill: return "Raise SIGILL"
+        case .sigbus: return "Raise SIGBUS"
+        case .sigfpe: return "Raise SIGFPE"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .swiftFatalError: return "Exercises Swift runtime trap handling."
+        case .nsException: return "Exercises NSSetUncaughtExceptionHandler."
+        case .sigabrt: return "Exercises abort-style signal capture."
+        case .sigtrap: return "Exercises trap/breakpoint signal capture."
+        case .sigsegv: return "Exercises segmentation fault signal capture."
+        case .sigill: return "Exercises illegal instruction signal capture."
+        case .sigbus: return "Exercises bus error signal capture."
+        case .sigfpe: return "Exercises arithmetic exception signal capture."
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .swiftFatalError: return "swift"
+        case .nsException: return "exclamationmark.triangle"
+        case .sigabrt: return "stop.circle"
+        case .sigtrap: return "point.3.connected.trianglepath.dotted"
+        case .sigsegv: return "bolt.trianglebadge.exclamationmark"
+        case .sigill: return "xmark.octagon"
+        case .sigbus: return "arrow.left.arrow.right.circle"
+        case .sigfpe: return "divide.circle"
+        }
+    }
+
+    func trigger() -> Never {
+        switch self {
+        case .swiftFatalError:
+            fatalError("Sample crash — Swift fatalError from UIKit SessionView")
+        case .nsException:
+            NSException(
+                name: .genericException,
+                reason: "Sample crash — NSException from UIKit SessionView",
+                userInfo: nil
+            ).raise()
+            fatalError("NSException.raise() unexpectedly returned")
+        case .sigabrt:
+            raiseSignal(SIGABRT)
+        case .sigtrap:
+            raiseSignal(SIGTRAP)
+        case .sigsegv:
+            raiseSignal(SIGSEGV)
+        case .sigill:
+            raiseSignal(SIGILL)
+        case .sigbus:
+            raiseSignal(SIGBUS)
+        case .sigfpe:
+            raiseSignal(SIGFPE)
+        }
+    }
+
+    private func raiseSignal(_ signal: Int32) -> Never {
+        #if canImport(Darwin)
+        raise(signal)
+        #endif
+        fatalError("raise(\(signal)) unexpectedly returned")
     }
 }
 

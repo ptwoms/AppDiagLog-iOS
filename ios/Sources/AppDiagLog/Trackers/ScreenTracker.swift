@@ -56,38 +56,65 @@ final class ScreenTrackerBridge: @unchecked Sendable {
         lock.unlock()
     }
 
-    fileprivate func observeViewDidAppear(_ viewController: UIViewController) {
+    fileprivate func currentScreenName() -> String? {
+        lock.lock()
+        let runtime = self.runtime
+        let armed = self.armed
+        lock.unlock()
+        guard armed, let runtime else { return nil }
+        return runtime.currentScreen.get()
+    }
+
+    fileprivate func observeViewDidAppear(
+        _ viewController: UIViewController,
+        screenBeforeViewDidAppear: String?
+    ) {
         lock.lock()
         let runtime = self.runtime
         let armed = self.armed
         lock.unlock()
         guard armed, let runtime else { return }
 
-        let name = String(describing: type(of: viewController))
-        // Skip obvious UIKit containers that aren't real screens. Heuristic only.
-        if Self.shouldSkip(name: name) { return }
+        guard let screen = screenView(from: viewController, mode: runtime.config.autoTrack.screenViews) else {
+            return
+        }
 
-        runtime.currentScreen.set(name)
+        let currentScreen = runtime.currentScreen.get()
+        guard currentScreen == screenBeforeViewDidAppear else {
+            // App code or SwiftUI `.trackScreen(_:)` already chose the meaningful name.
+            return
+        }
+        guard currentScreen != screen.name else { return }
+
+        runtime.currentScreen.set(screen.name)
         Task.detached(priority: .utility) {
             await runtime.pipeline.enqueue(
                 event: EventName.screenView,
                 level: .info,
-                props: ["screen": name, "kind": "uikit"]
+                props: ["screen": screen.name, "kind": screen.kind]
             )
         }
     }
 
-    private static func shouldSkip(name: String) -> Bool {
-        // Common container / private classes.
-        let skipped = [
-            "UINavigationController", "UITabBarController", "UISplitViewController",
-            "UIPageViewController", "UIAlertController", "UIInputViewController",
-            "UICompatibilityInputViewController", "_UIRemoteKeyboardViewController",
-            "UISystemInputAssistantViewController"
-        ]
-        if skipped.contains(name) { return true }
-        if name.hasPrefix("_") || name.hasPrefix("SwiftUI.") { return true }
-        return false
+    private func screenView(
+        from viewController: UIViewController,
+        mode: ScreenTrackingMode?
+    ) -> (name: String, kind: String)? {
+        guard let mode else { return nil }
+
+        switch mode {
+        case .automatic(let config):
+            let name = String(describing: type(of: viewController))
+            guard config.shouldTrack(controllerName: name) else { return nil }
+            return (name, "automatic")
+
+        case .accessibilityIdentifier(let config):
+            guard let identifier = viewController.view.accessibilityIdentifier else {
+                return nil
+            }
+            guard config.shouldTrack(identifier: identifier) else { return nil }
+            return (identifier, "accessibility_identifier")
+        }
     }
 
     private static func swizzleViewDidAppear() {
@@ -104,9 +131,13 @@ final class ScreenTrackerBridge: @unchecked Sendable {
 
 extension UIViewController {
     @objc fileprivate func appdiaglog_viewDidAppear(_ animated: Bool) {
+        let screenBeforeViewDidAppear = ScreenTrackerBridge.shared.currentScreenName()
         // After exchange this calls the *original* implementation.
         appdiaglog_viewDidAppear(animated)
-        ScreenTrackerBridge.shared.observeViewDidAppear(self)
+        ScreenTrackerBridge.shared.observeViewDidAppear(
+            self,
+            screenBeforeViewDidAppear: screenBeforeViewDidAppear
+        )
     }
 }
 

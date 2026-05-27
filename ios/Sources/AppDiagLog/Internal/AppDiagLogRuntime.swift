@@ -9,6 +9,7 @@ final class AppDiagLogRuntime: @unchecked Sendable {
     let pipeline: LogPipeline
     let sessionManager: SessionManager
     let exportManager: ExportManager
+    let crashMarkerStore: CrashMarkerStore
     let sessionIdHolder: SessionIdHolder
     let currentScreen: CurrentScreenHolder
     let factory: EventFactory
@@ -22,6 +23,7 @@ final class AppDiagLogRuntime: @unchecked Sendable {
         pipeline: LogPipeline,
         sessionManager: SessionManager,
         exportManager: ExportManager,
+        crashMarkerStore: CrashMarkerStore,
         sessionIdHolder: SessionIdHolder,
         currentScreen: CurrentScreenHolder,
         factory: EventFactory,
@@ -34,6 +36,7 @@ final class AppDiagLogRuntime: @unchecked Sendable {
         self.pipeline = pipeline
         self.sessionManager = sessionManager
         self.exportManager = exportManager
+        self.crashMarkerStore = crashMarkerStore
         self.sessionIdHolder = sessionIdHolder
         self.currentScreen = currentScreen
         self.factory = factory
@@ -54,6 +57,7 @@ final class AppDiagLogRuntime: @unchecked Sendable {
 
         let indexStore = SessionIndexStore(paths: paths, maxSessions: config.maxSessions)
         let fileWriter = SessionFileWriter(paths: paths)
+        let crashMarkerStore = CrashMarkerStore(paths: paths)
         let eviction = EvictionPolicy(
             paths: paths,
             maxSessions: config.maxSessions,
@@ -151,6 +155,7 @@ final class AppDiagLogRuntime: @unchecked Sendable {
             pipeline: pipeline,
             sessionManager: sessionManager,
             exportManager: exportManager,
+            crashMarkerStore: crashMarkerStore,
             sessionIdHolder: sessionIdHolder,
             currentScreen: screenHolder,
             factory: factory,

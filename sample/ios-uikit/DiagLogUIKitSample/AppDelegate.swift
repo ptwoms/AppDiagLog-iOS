@@ -1,6 +1,7 @@
 import UIKit
 import Foundation
 import Combine
+import UserNotifications
 import AppDiagLog
 
 enum SampleConfiguration {
@@ -30,7 +31,7 @@ enum SampleConfiguration {
         return Data(base64Encoded: sampleKeyBase64) ?? Data()
     }()
 
-    static let maxSessions = 5
+    static let maxSessions = 15
     static let maxEventsPerSession = 1_000
     static let maxDiskUsageMB = 10
     static let flushBatchSize = 50
@@ -63,7 +64,7 @@ enum SampleConfiguration {
 
     static let autoTrack = AutoTrackConfig(
         appLifecycle: true,
-        screenViews: true,
+        screenViews: .automatic(),
         taps: true,
         apiCalls: true,
         crashes: true,
@@ -72,7 +73,7 @@ enum SampleConfiguration {
         deviceSnapshot: true,
         memoryPressure: true,
         batteryThermal: true,
-        permissionChanges: true,
+        permissionChanges: PermissionTrackConfig(permissions: Set(TrackedPermission.allCases), trigger: .didBecomeActive),
         pushNotifications: true,
         webViews: true,
         backgroundTasks: true,
@@ -157,6 +158,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
         AppDiagLog.initialize(config: SampleConfiguration.sdkConfig)
+        registerNotificationCategories()
 
         AppDiagLog.info(
             "sample_app_launch",
@@ -167,6 +169,27 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
             ]
         )
         return true
+    }
+
+    private func registerNotificationCategories() {
+        let viewAction = UNNotificationAction(
+            identifier: "view_order",
+            title: "View Order",
+            options: .foreground
+        )
+        let dismissAction = UNNotificationAction(
+            identifier: "dismiss_order",
+            title: "Dismiss",
+            options: .destructive
+        )
+        let orderCategory = UNNotificationCategory(
+            identifier: "order_update",
+            actions: [viewAction, dismissAction],
+            intentIdentifiers: [],
+            options: []
+        )
+        UNUserNotificationCenter.current().setNotificationCategories([orderCategory])
+        UNUserNotificationCenter.current().delegate = self
     }
 
     func application(
@@ -185,5 +208,32 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
     func applicationWillTerminate(_ application: UIApplication) {
         AppDiagLog.stopMcpServer()
         AppDiagLog.shutdown()
+    }
+}
+
+// MARK: - UNUserNotificationCenterDelegate
+
+extension AppDelegate: UNUserNotificationCenterDelegate {
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        AppDiagLog.trackPushReceived(
+            categoryIdentifier: notification.request.content.categoryIdentifier
+        )
+        completionHandler([.banner, .sound])
+    }
+
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping () -> Void
+    ) {
+        AppDiagLog.trackPushInteraction(
+            actionIdentifier: response.actionIdentifier,
+            categoryIdentifier: response.notification.request.content.categoryIdentifier
+        )
+        completionHandler()
     }
 }

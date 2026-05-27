@@ -44,13 +44,14 @@ actor SessionManager {
         self.index = SessionIndex(maxSessions: config.maxSessions)
     }
 
-    func bootstrap() async {
+    func bootstrap() async -> [String] {
         index = await indexStore.load()
-        let recovered = sealUnsealedSessions()
-        if recovered > 0 {
-            SdkLog.debug("recovered \(recovered) unsealed session(s) from prior run")
+        let recoveredIds = sealUnsealedSessions()
+        if !recoveredIds.isEmpty {
+            SdkLog.debug("recovered \(recoveredIds.count) unsealed session(s) from prior run")
             await indexStore.persist(index)
         }
+        return recoveredIds
     }
 
     func ensureSession() async -> State? {
@@ -73,11 +74,13 @@ actor SessionManager {
             if let bg = s.backgroundedAt {
                 let elapsed = Date().timeIntervalSince(bg)
                 if elapsed > Double(config.sessionTimeoutMinutes) * 60 {
+                    SdkLog.info("session \(s.id) timed out (\(Int(elapsed))s) — rotating")
                     await sealSession(state: s, pending: [])
                     guard let next = await startNewSession() else { return nil }
                     return (next, true)
                 }
             }
+            SdkLog.debug("session \(s.id) resumed")
             s.backgroundedAt = nil
             current = s
             return (s, false)
@@ -135,6 +138,7 @@ actor SessionManager {
             await indexStore.persist(index)
             current = state
             sessionIdHolder.set(id)
+            SdkLog.info("session started: \(id)")
             return state
         } catch {
             SdkLog.error("failed to start session", error: error)
@@ -152,6 +156,7 @@ actor SessionManager {
         current = nil
         sessionIdHolder.set(nil)
         await indexStore.persist(index)
+        SdkLog.info("session sealed: \(state.id)")
     }
 
     private func persistToDisk(state: State, events: [EventEnvelope], sealing: Bool) async {
@@ -175,21 +180,19 @@ actor SessionManager {
         }
     }
 
-    private func sealUnsealedSessions() -> Int {
+    private func sealUnsealedSessions() -> [String] {
         let now = self.nowIso
-        var count = 0
+        var recoveredIds: [String] = []
         for i in index.sessions.indices where !index.sessions[i].sealed {
+            recoveredIds.append(index.sessions[i].id)
             index.sessions[i].sealed = true
             index.sessions[i].sealedAt = now
-            count += 1
         }
-        return count
+        return recoveredIds
     }
     
     private lazy var nowDateFormatter: ISO8601DateFormatter = {
-        let fmt = ISO8601DateFormatter()
-        fmt.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return fmt
+        Date.isoDateFormatter
     }()
 
     private var nowIso: String {

@@ -36,6 +36,28 @@ struct AutoTrackingView: View {
                         .foregroundStyle(.secondary)
                 }
 
+                Section("Permissions") {
+                    NavigationLink {
+                        PermissionsView()
+                    } label: {
+                        Label("Permission Prompts", systemImage: "hand.raised.fill")
+                    }
+                    Text("Request Camera, Photo Library, Contacts, and Push Notification permissions. Each grant or denial triggers a permission_change event via PermissionChangeTracker.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+
+                Section("WebView") {
+                    NavigationLink {
+                        WebViewScreen()
+                    } label: {
+                        Label("Open WebView", systemImage: "globe")
+                    }
+                    Text("A real WKWebView that uses DiagLogNavigationDelegate. Every navigation event (start, finish, fail) is tracked automatically by WebViewTracker.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+
                 Section("System Auto-Tracking") {
                     Label("Connectivity changes are tracked automatically while the app runs.", systemImage: "wifi")
                         .font(.footnote)

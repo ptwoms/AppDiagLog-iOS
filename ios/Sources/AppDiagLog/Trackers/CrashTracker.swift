@@ -6,13 +6,12 @@ import Darwin
 /// Installs best-effort crash capture:
 ///
 ///   - `NSSetUncaughtExceptionHandler` — catches Objective-C NSException crashes
-///   - POSIX signal handlers for SIGABRT/SIGSEGV/SIGBUS/SIGILL/SIGFPE/SIGPIPE
+///   - POSIX signal handlers for SIGABRT/SIGSEGV/SIGBUS/SIGILL/SIGFPE/SIGPIPE/SIGTRAP
 ///
-/// When a crash fires we have ~200-1000ms before the process dies, so we record the
-/// crash event and then bridge synchronously into our structured-concurrency pipeline
-/// using a `DispatchSemaphore`. This is the SDK's only other pragmatic GCD touchpoint
-/// — it's the only reliable way to block a signal handler until a `Task { await ... }`
-/// completes.
+/// Crash handlers write only a tiny marker file. On the next launch the SDK consumes
+/// that marker and records a normal encrypted `crash` event in the new session. This
+/// avoids actor hops, encryption, allocation-heavy stack capture, and file rewriting
+/// while the process is already dying.
 ///
 /// We do **not** override an existing crash reporter (Sentry/Crashlytics/etc.). Instead
 /// we chain: on install we stash the previous handler and invoke it after our work.
@@ -41,15 +40,15 @@ final class CrashTrackerBridge: @unchecked Sendable {
     private let lock = NSLock()
     private var installed = false
     private var armed = false
-    private weak var runtime: AppDiagLogRuntime?
+    private var markerPath: String?
     private var previousExceptionHandler: (@convention(c) (NSException) -> Void)?
     private var previousSignalHandlers: [Int32: sig_t] = [:]
 
-    private static let capturedSignals: [Int32] = [SIGABRT, SIGILL, SIGSEGV, SIGBUS, SIGFPE, SIGPIPE]
+    private static let capturedSignals: [Int32] = [SIGABRT, SIGILL, SIGSEGV, SIGBUS, SIGFPE, SIGPIPE, SIGTRAP]
 
     func install(runtime: AppDiagLogRuntime) {
         lock.lock(); defer { lock.unlock() }
-        self.runtime = runtime
+        self.markerPath = runtime.crashMarkerStore.markerPath
         self.armed = true
         guard !installed else { return }
         installed = true
@@ -72,7 +71,7 @@ final class CrashTrackerBridge: @unchecked Sendable {
     func disarm() {
         lock.lock()
         armed = false
-        runtime = nil
+        markerPath = nil
         lock.unlock()
     }
 
@@ -80,19 +79,13 @@ final class CrashTrackerBridge: @unchecked Sendable {
 
     private func handleException(_ exc: NSException) {
         lock.lock()
-        let runtime = self.runtime
         let armed = self.armed
+        let markerPath = self.markerPath
         let previous = self.previousExceptionHandler
         lock.unlock()
 
-        if armed, let runtime {
-            let stack = exc.callStackSymbols.prefix(64).joined(separator: "\n")
-            let props: [String: String] = [
-                "type": "NSException:\(exc.name.rawValue)",
-                "reason": exc.reason ?? "",
-                "stack": truncate(stack)
-            ]
-            record(runtime: runtime, props: props)
+        if armed, let markerPath {
+            writeExceptionMarker(exc, to: markerPath)
         }
 
         previous?(exc)
@@ -100,20 +93,13 @@ final class CrashTrackerBridge: @unchecked Sendable {
 
     private func handleSignal(_ sig: Int32) {
         lock.lock()
-        let runtime = self.runtime
         let armed = self.armed
+        let markerPath = self.markerPath
         let previous = previousSignalHandlers[sig]
         lock.unlock()
 
-        if armed, let runtime {
-            let name = Self.signalName(sig)
-            let stack = Thread.callStackSymbols.prefix(64).joined(separator: "\n")
-            let props: [String: String] = [
-                "type": "Signal:\(name)",
-                "reason": "signal \(sig)",
-                "stack": truncate(stack)
-            ]
-            record(runtime: runtime, props: props)
+        if armed, let markerPath {
+            CrashMarkerWriter.writeSignal(sig, to: markerPath)
         }
 
         // Reinstall default handler for this signal and re-raise so the OS generates
@@ -123,41 +109,12 @@ final class CrashTrackerBridge: @unchecked Sendable {
         raise(sig)
     }
 
-    // MARK: - Bridge to async pipeline
-
-    /// Crash handlers cannot `await`. We use a DispatchSemaphore to block until the
-    /// detached task signals back — the process is dying anyway, so a short block on
-    /// whichever thread triggered the crash is acceptable.
-    private func record(runtime: AppDiagLogRuntime, props: [String: String]) {
-        let sema = DispatchSemaphore(value: 0)
-        Task.detached(priority: .userInitiated) {
-            await runtime.pipeline.enqueue(
-                event: EventName.crash,
-                level: .error,
-                props: props
-            )
-            // Final shutdown: flush remaining events + seal the session file.
-            await runtime.pipeline.shutdown()
-            sema.signal()
-        }
-        // 1s budget
-        _ = sema.wait(timeout: .now() + .seconds(1))
-    }
-
-    private func truncate(_ s: String) -> String {
-        if s.count <= 4000 { return s }
-        return String(s.prefix(4000)) + "…(truncated)"
-    }
-
-    private static func signalName(_ sig: Int32) -> String {
-        switch sig {
-        case SIGABRT: return "SIGABRT"
-        case SIGILL:  return "SIGILL"
-        case SIGSEGV: return "SIGSEGV"
-        case SIGBUS:  return "SIGBUS"
-        case SIGFPE:  return "SIGFPE"
-        case SIGPIPE: return "SIGPIPE"
-        default:      return "SIG\(sig)"
+    private func writeExceptionMarker(_ exception: NSException, to path: String) {
+        do {
+            let data = try JSONEncoder().encode(CrashMarker.exception(exception))
+            try data.write(to: URL(fileURLWithPath: path), options: [.atomic])
+        } catch {
+            SdkLog.warn("failed to write crash marker", error: error)
         }
     }
 }

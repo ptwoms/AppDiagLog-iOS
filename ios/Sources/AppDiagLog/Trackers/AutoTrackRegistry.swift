@@ -19,7 +19,7 @@ actor AutoTrackRegistry {
             await register(AppLifecycleTracker(runtime: runtime))
         }
         #if os(iOS) || os(tvOS)
-        if cfg.screenViews {
+        if cfg.screenViews != nil {
             await register(ScreenTracker(runtime: runtime))
         }
         if cfg.taps {
@@ -44,6 +44,33 @@ actor AutoTrackRegistry {
         }
         #endif
 
+        #if canImport(UIKit) && !os(watchOS)
+        if cfg.memoryPressure {
+            await register(MemoryPressureTracker(runtime: runtime))
+        }
+        #endif
+
+        #if os(iOS)
+        if let permConfig = cfg.permissionChanges {
+            await register(PermissionChangeTracker(runtime: runtime, config: permConfig))
+        }
+        if cfg.pushNotifications {
+            await register(PushNotificationTracker(runtime: runtime))
+        }
+        #if canImport(WebKit)
+        if cfg.webViews {
+            await register(WebViewTracker(runtime: runtime))
+        }
+        #endif
+        if cfg.backgroundTasks {
+            await register(BackgroundTaskTracker(runtime: runtime))
+        }
+        #endif
+
+        if cfg.preferenceChanges {
+            await register(PreferenceChangeTracker(runtime: runtime))
+        }
+
         if cfg.deviceSnapshot {
             // One-shot event at session start. Not a tracker.
             await emitDeviceSnapshot()
@@ -60,6 +87,7 @@ actor AutoTrackRegistry {
     private func register(_ tracker: any Tracker) async {
         await tracker.start()
         trackers.append(tracker)
+        SdkLog.debug("tracker started: \(type(of: tracker))")
     }
 
     private func emitDeviceSnapshot() async {

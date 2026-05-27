@@ -6,12 +6,14 @@ struct AppDiagLogPaths: Sendable {
     let sessionsDir: URL
     let indexFile: URL
     let tempDir: URL
+    let crashMarkerFile: URL
 
     init(rootDir: URL) {
         self.root = rootDir.appendingPathComponent("appdiaglog", isDirectory: true)
         self.sessionsDir = root.appendingPathComponent("sessions", isDirectory: true)
         self.indexFile = root.appendingPathComponent("session_index.json")
         self.tempDir = root.appendingPathComponent("tmp", isDirectory: true)
+        self.crashMarkerFile = root.appendingPathComponent("pending_crash_marker.json")
         createDirectories()
     }
 

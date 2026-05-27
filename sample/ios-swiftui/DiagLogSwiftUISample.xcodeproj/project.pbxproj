@@ -14,9 +14,22 @@
 		C8A3C8E42FC2B19500184EE1 /* DiagLogSwiftUISample.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = DiagLogSwiftUISample.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		C807643D2FC6AC23000ADC55 /* Exceptions for "DiagLogSwiftUISample" folder in "DiagLogSwiftUISample" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = C8A3C8E32FC2B19500184EE1 /* DiagLogSwiftUISample */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		C8A3C8E62FC2B19500184EE1 /* DiagLogSwiftUISample */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				C807643D2FC6AC23000ADC55 /* Exceptions for "DiagLogSwiftUISample" folder in "DiagLogSwiftUISample" target */,
+			);
 			path = DiagLogSwiftUISample;
 			sourceTree = "<group>";
 		};
@@ -266,6 +279,14 @@
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = DiagLogSwiftUISample/Info.plist;
+				INFOPLIST_KEY_NSCameraUsageDescription = "Camera prompt for log testing";
+				INFOPLIST_KEY_NSContactsUsageDescription = "Contact promot for log testing";
+				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "Location prompt for log testing";
+				INFOPLIST_KEY_NSLocationUsageDescription = "Location prompt for log testing";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Photo library prompt for log testing";
+				INFOPLIST_KEY_NSRemindersUsageDescription = "Reminder promopt for log testing";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Speech recognition prompt for log testing";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -295,6 +316,14 @@
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = DiagLogSwiftUISample/Info.plist;
+				INFOPLIST_KEY_NSCameraUsageDescription = "Camera prompt for log testing";
+				INFOPLIST_KEY_NSContactsUsageDescription = "Contact promot for log testing";
+				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "Location prompt for log testing";
+				INFOPLIST_KEY_NSLocationUsageDescription = "Location prompt for log testing";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Photo library prompt for log testing";
+				INFOPLIST_KEY_NSRemindersUsageDescription = "Reminder promopt for log testing";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Speech recognition prompt for log testing";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;

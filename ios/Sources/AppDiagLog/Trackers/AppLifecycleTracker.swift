@@ -35,14 +35,7 @@ final class AppLifecycleTracker: Tracker, @unchecked Sendable {
         ) { [weak self] _ in
             self?.handleBackground()
         }
-        let memToken = center.addObserver(
-            forName: UIApplication.didReceiveMemoryWarningNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            self?.handleMemoryWarning()
-        }
-        setTokens([fgToken, bgToken, memToken])
+        setTokens([fgToken, bgToken])
         #endif
     }
 
@@ -77,6 +70,7 @@ final class AppLifecycleTracker: Tracker, @unchecked Sendable {
     private func handleForeground() {
         let runtime = self.runtime
         Task.detached(priority: .utility) {
+            SdkLog.debug("app will enter foreground")
             await runtime.pipeline.enqueue(
                 event: EventName.appForeground,
                 level: .info,
@@ -94,6 +88,7 @@ final class AppLifecycleTracker: Tracker, @unchecked Sendable {
     private func handleBackground() {
         let runtime = self.runtime
         Task.detached(priority: .utility) {
+            SdkLog.debug("app did enter background")
             await runtime.pipeline.enqueue(
                 event: EventName.appBackground,
                 level: .info,
@@ -103,17 +98,6 @@ final class AppLifecycleTracker: Tracker, @unchecked Sendable {
             // as backgrounded (no re-flush; pipeline.flushOnce already wrote them).
             await runtime.pipeline.flushOnce()
             await runtime.sessionManager.markBackgrounded(with: [])
-        }
-    }
-
-    private func handleMemoryWarning() {
-        let runtime = self.runtime
-        Task.detached(priority: .utility) {
-            await runtime.pipeline.enqueue(
-                event: EventName.memoryWarning,
-                level: .warning,
-                props: [:]
-            )
         }
     }
 }

@@ -4,9 +4,11 @@ import AppDiagLog
 
 final class AutoTrackingViewController: UIViewController {
     private lazy var hostingController = UIHostingController(
-        rootView: AutoTrackingView { [weak self] in
-            self?.pushDetailScreen()
-        }
+        rootView: AutoTrackingView(
+            onPushDetail: { [weak self] in self?.pushDetailScreen() },
+            onOpenPermissions: { [weak self] in self?.pushPermissionsScreen() },
+            onOpenWebView: { [weak self] in self?.pushWebViewScreen() }
+        )
     )
 
     override func viewDidLoad() {
@@ -24,6 +26,17 @@ final class AutoTrackingViewController: UIViewController {
     private func pushDetailScreen() {
         AppDiagLog.info("sample_push_detail", ["source": "AutoTrackingViewController", "navigation": "uikit"])
         navigationController?.pushViewController(AutoTrackingDetailHostingController(), animated: true)
+    }
+
+    private func pushPermissionsScreen() {
+        let vc = PermissionsViewController()
+        navigationController?.pushViewController(vc, animated: true)
+    }
+
+    private func pushWebViewScreen() {
+        let vc = WebViewViewController()
+        vc.title = "WebView"
+        navigationController?.pushViewController(vc, animated: true)
     }
 
     private func embed(_ child: UIViewController) {

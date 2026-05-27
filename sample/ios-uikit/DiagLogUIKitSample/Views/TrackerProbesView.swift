@@ -2,6 +2,7 @@ import Foundation
 import SwiftUI
 import AppDiagLog
 import UIKit
+import UserNotifications
 
 struct TrackerProbesView: View {
     @State private var deviceInfo = UIKitDeviceProbeInfo.current
@@ -9,6 +10,10 @@ struct TrackerProbesView: View {
     @State private var memInfo = UIKitMemProbeInfo.current
     @State private var prefKey = "sample_pref_key"
     @State private var prefValue = "hello_appdiaglog"
+    @State private var currentPrefValue: String = UserDefaults.standard.string(forKey: "sample_pref_key") ?? "—"
+    @State private var pushCategory = "order_update"
+    @State private var webURLString = "https://example.com/products/123"
+    @State private var bgTaskId = "com.example.sync"
     @State private var actionLog = [LogEntry("Tap any section to emit a manual probe event.")]
 
     var body: some View {
@@ -83,25 +88,114 @@ struct TrackerProbesView: View {
             }
 
             Section("Preferences") {
-                Text("Write a UserDefaults key-value pair. The SDK's PreferenceChangeTracker observes UserDefaults.didChangeNotification automatically when enabled.")
+                Text("Write a UserDefaults key-value pair. PreferenceChangeTracker observes UserDefaults.didChangeNotification automatically — no manual log call needed.")
                     .font(.footnote)
                     .foregroundColor(.secondary)
 
                 TextField("Key", text: $prefKey)
                     .autocorrectionDisabled()
-                TextField("Value", text: $prefValue)
+                TextField("New Value", text: $prefValue)
                     .autocorrectionDisabled()
+
+                HStack {
+                    Text("Current Value")
+                    Spacer()
+                    Text(currentPrefValue)
+                        .foregroundColor(.secondary)
+                        .font(.footnote)
+                        .multilineTextAlignment(.trailing)
+                }
 
                 Button {
                     UserDefaults.standard.set(prefValue, forKey: prefKey)
-                    AppDiagLog.info("preference_change_manual", [
-                        "key": prefKey,
-                        "value": prefValue,
-                        "source": "ios_uikit_tracker_probes",
-                    ])
-                    appendAction("Wrote \(prefKey)=\(prefValue) and logged preference_change_manual.")
+                    currentPrefValue = prefValue
+                    appendAction("Wrote \(prefKey)=\(prefValue). PreferenceChangeTracker fires automatically.")
                 } label: {
-                    Label("Write Preference & Log Event", systemImage: "slider.horizontal.3")
+                    Label("Write Preference", systemImage: "slider.horizontal.3")
+                }
+            }
+
+            Section("Push Notifications") {
+                Text("Schedule a real local notification with action buttons. The app's UNUserNotificationCenterDelegate calls AppDiagLog.trackPushReceived / trackPushInteraction automatically — no manual SDK call needed.")
+                    .font(.footnote)
+                    .foregroundColor(.secondary)
+
+                TextField("Category ID", text: $pushCategory)
+                    .autocorrectionDisabled()
+
+                Text("Actions registered for \"order_update\": View Order, Dismiss.")
+                    .font(.footnote)
+                    .foregroundColor(.secondary)
+
+                Button {
+                    Task {
+                        await scheduleTestNotification()
+                    }
+                } label: {
+                    Label("Schedule Test Notification (5 s)", systemImage: "bell.badge.clock")
+                }
+
+                Text("Background the app after tapping — the notification appears in 5 seconds with action buttons.")
+                    .font(.footnote)
+                    .foregroundColor(.secondary)
+            }
+
+            Section("WebView Navigation") {
+                Text("Use DiagLogNavigationDelegate as your WKWebView delegate for automatic tracking, or call AppDiagLog.trackWebNavigation manually.")
+                    .font(.footnote)
+                    .foregroundColor(.secondary)
+
+                TextField("URL", text: $webURLString)
+                    .autocorrectionDisabled()
+                    .keyboardType(.URL)
+
+                Button {
+                    if let url = URL(string: webURLString) {
+                        AppDiagLog.trackWebNavigation(url: url, event: "did_start")
+                        appendAction("Web nav did_start — \(webURLString).")
+                    }
+                } label: {
+                    Label("Simulate Navigation Start", systemImage: "globe")
+                }
+
+                Button {
+                    if let url = URL(string: webURLString) {
+                        AppDiagLog.trackWebNavigation(url: url, event: "did_finish")
+                        appendAction("Web nav did_finish — \(webURLString).")
+                    }
+                } label: {
+                    Label("Simulate Navigation Finish", systemImage: "checkmark.circle")
+                }
+            }
+
+            Section("Background Tasks") {
+                Text("Call AppDiagLog.trackBackgroundTask from your BGTask handler (begin, expired, completed). Use these buttons to simulate events.")
+                    .font(.footnote)
+                    .foregroundColor(.secondary)
+
+                TextField("Task identifier", text: $bgTaskId)
+                    .autocorrectionDisabled()
+
+                HStack {
+                    Button("Begin") {
+                        AppDiagLog.trackBackgroundTask(identifier: bgTaskId, event: "begin")
+                        appendAction("BG task begin — \(bgTaskId).")
+                    }
+                    .buttonStyle(.bordered)
+                    Spacer()
+                    Button("Expired") {
+                        AppDiagLog.trackBackgroundTask(identifier: bgTaskId, event: "expired")
+                        appendAction("BG task expired — \(bgTaskId).")
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(.orange)
+                    Spacer()
+                    Button("Completed") {
+                        AppDiagLog.trackBackgroundTask(identifier: bgTaskId, event: "completed")
+                        appendAction("BG task completed — \(bgTaskId).")
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(.green)
                 }
             }
 
@@ -121,6 +215,37 @@ struct TrackerProbesView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: ProcessInfo.thermalStateDidChangeNotification)) { _ in
             batteryInfo = UIKitBatteryProbeInfo.current
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)) { _ in
+            currentPrefValue = UserDefaults.standard.string(forKey: prefKey) ?? "—"
+        }
+    }
+
+    private func scheduleTestNotification() async {
+        let settings = await UNUserNotificationCenter.current().notificationSettings()
+        let authorizationStatus = settings.authorizationStatus
+        guard authorizationStatus == .authorized ||
+                authorizationStatus == .provisional else {
+            appendAction("Push not authorized. Visit the Permissions screen first.")
+            return
+        }
+        let content = UNMutableNotificationContent()
+        content.title = "AppDiagLog Sample"
+        content.body = "Tap an action to test push interaction tracking."
+        content.sound = .default
+        content.categoryIdentifier = pushCategory
+        
+        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 5, repeats: false)
+        let request = UNNotificationRequest(
+            identifier: UUID().uuidString,
+            content: content,
+            trigger: trigger
+        )
+        do {
+            try await UNUserNotificationCenter.current().add(request)
+            appendAction("Notification scheduled — fires in 5 s. Background the app now.")
+        } catch {
+            appendAction("Failed to schedule: \(error.localizedDescription)")
         }
     }
 
@@ -148,7 +273,7 @@ private struct UIKitDeviceProbeInfo {
     let locale: String
     let timezone: String
 
-    static var current: UIKitDeviceProbeInfo {
+    @MainActor static var current: UIKitDeviceProbeInfo {
         let device = UIDevice.current
         return UIKitDeviceProbeInfo(
             os: "\(device.systemName) \(device.systemVersion)",
@@ -164,7 +289,7 @@ private struct UIKitBatteryProbeInfo {
     let state: String
     let thermal: String
 
-    static var current: UIKitBatteryProbeInfo {
+    @MainActor static var current: UIKitBatteryProbeInfo {
         UIDevice.current.isBatteryMonitoringEnabled = true
         let levelValue = UIDevice.current.batteryLevel
         let levelStr = levelValue >= 0 ? "\(Int(levelValue * 100))%" : "Unknown"

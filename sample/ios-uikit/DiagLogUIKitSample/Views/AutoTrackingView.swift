@@ -6,6 +6,8 @@ import Combine
 
 struct AutoTrackingView: View {
     let onPushDetail: () -> Void
+    let onOpenPermissions: () -> Void
+    let onOpenWebView: () -> Void
 
     @StateObject private var connectivityObserver = ConnectivityObserver()
     @State private var networkStatus = "Idle"
@@ -22,6 +24,30 @@ struct AutoTrackingView: View {
                 }
 
                 Text("UIKit owns the navigation stack for this tab. The SwiftUI content simply asks the controller to push another screen.")
+                    .font(.footnote)
+                    .foregroundColor(.secondary)
+            }
+
+            Section("Permissions") {
+                Button {
+                    appendAction("Opening Permissions screen.")
+                    onOpenPermissions()
+                } label: {
+                    Label("Permission Prompts", systemImage: "hand.raised.fill")
+                }
+                Text("Request Camera, Photo Library, Contacts, and Push Notification permissions. Each grant or denial triggers a permission_change event via PermissionChangeTracker.")
+                    .font(.footnote)
+                    .foregroundColor(.secondary)
+            }
+
+            Section("WebView") {
+                Button {
+                    appendAction("Opening WebView screen.")
+                    onOpenWebView()
+                } label: {
+                    Label("Open WebView", systemImage: "globe")
+                }
+                Text("A real WKWebView using DiagLogNavigationDelegate. Every navigation event (start, finish, fail) is tracked automatically by WebViewTracker.")
                     .font(.footnote)
                     .foregroundColor(.secondary)
             }
@@ -101,7 +127,7 @@ struct AutoTrackingView: View {
     }
 }
 
-private final class ConnectivityObserver: ObservableObject {
+@MainActor private final class ConnectivityObserver: ObservableObject {
     @Published private(set) var statusText = "Checking connection…"
     @Published private(set) var iconName = "wifi"
 
@@ -110,7 +136,7 @@ private final class ConnectivityObserver: ObservableObject {
 
     init() {
         monitor.pathUpdateHandler = { [weak self] path in
-            DispatchQueue.main.async {
+            Task { @MainActor in
                 guard let self else { return }
                 if path.status == .satisfied {
                     if path.usesInterfaceType(.wifi) {

@@ -8,28 +8,28 @@ enum SdkLog {
     private static let logger = Logger(subsystem: "com.appdiaglog.sdk", category: "AppDiagLog")
 
     static func debug(_ message: String) {
-        if enabled { logger.debug("\(message, privacy: .public)") }
+        if enabled { logger.debug("[AppDiagLog] \(message, privacy: .public)") }
     }
 
     static func info(_ message: String) {
-        if enabled { logger.info("\(message, privacy: .public)") }
+        if enabled { logger.info("[AppDiagLog] \(message, privacy: .public)") }
     }
 
     static func warn(_ message: String, error: Error? = nil) {
         guard enabled else { return }
         if let error {
-            logger.warning("\(message, privacy: .public): \(String(describing: error), privacy: .public)")
+            logger.warning("[AppDiagLog] \(message, privacy: .public): \(String(describing: error), privacy: .public)")
         } else {
-            logger.warning("\(message, privacy: .public)")
+            logger.warning("[AppDiagLog] \(message, privacy: .public)")
         }
     }
 
     static func error(_ message: String, error: Error? = nil) {
         guard enabled else { return }
         if let error {
-            logger.error("\(message, privacy: .public): \(String(describing: error), privacy: .public)")
+            logger.error("[AppDiagLog] \(message, privacy: .public): \(String(describing: error), privacy: .public)")
         } else {
-            logger.error("\(message, privacy: .public)")
+            logger.error("[AppDiagLog] \(message, privacy: .public)")
         }
     }
 }
