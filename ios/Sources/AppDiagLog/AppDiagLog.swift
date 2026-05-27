@@ -136,6 +136,12 @@ public enum AppDiagLog {
 
     private static func replay(_ pendingLogs: [PendingLog], into runtime: AppDiagLogRuntime) async {
         for pending in pendingLogs {
+            if pending.event == EventName.screenView {
+                guard let name = pending.properties["screen"] else { continue }
+                guard shouldTrackScreen(name, runtime: runtime) else { continue }
+                guard runtime.currentScreen.get() != name else { continue }
+                runtime.currentScreen.set(name)
+            }
             await runtime.pipeline.enqueue(
                 event: pending.event,
                 level: pending.level,
@@ -177,21 +183,16 @@ public enum AppDiagLog {
         }
     }
 
-    /// Records a `screen_view` event and updates the current screen context. Deduplicates:
-    /// no event emitted when `name` matches the screen already set (prevents duplicate logs
-    /// from SwiftUI redraws that re-fire `onAppear` without a navigation change).
-    public static func trackScreen(_ name: String) {
-        guard let runtime = state.runtime else { return }
-        guard runtime.currentScreen.get() != name else { return }
-        runtime.currentScreen.set(name)
-        let sequence = runtime.sequenceGenerator.next()
-        Task.detached(priority: .utility) {
-            await runtime.pipeline.enqueue(
-                event: EventName.screenView,
-                level: .info,
-                props: ["screen": name, "kind": "swiftui"],
-                sequence: sequence
-            )
+    static func trackScreen(_ name: String, kind: String) {
+        let props = ["screen": name, "kind": kind]
+        switch state.routeLog(event: EventName.screenView, level: .info, properties: props) {
+        case .runtime(let runtime, let sequenced):
+            guard shouldTrackScreen(name, runtime: runtime) else { return }
+            guard runtime.currentScreen.get() != name else { return }
+            runtime.currentScreen.set(name)
+            enqueue(runtime: runtime, pending: sequenced)
+        default:
+            return
         }
     }
 
@@ -199,7 +200,15 @@ public enum AppDiagLog {
     /// Future events will carry this value in `screen` until replaced.
     public static func setCurrentScreen(_ name: String?) {
         guard let runtime = state.runtime else { return }
+        if let name, !shouldTrackScreen(name, runtime: runtime) {
+            return
+        }
         runtime.currentScreen.set(name)
+    }
+
+    private static func shouldTrackScreen(_ name: String, runtime: AppDiagLogRuntime) -> Bool {
+        guard let config = runtime.config.autoTrack.screenViews else { return false }
+        return config.shouldTrack(screenName: name)
     }
 
     // MARK: - Errors

@@ -6,7 +6,7 @@ Pure SwiftUI sample app sources for the AppDiagLog iOS SDK.
 
 - manual `debug`, `info`, `warning`, and `error` logging
 - session tagging and current-screen tracking
-- SwiftUI auto-tracking via `.trackScreen()` and `.trackDeepLinks()`
+- SwiftUI auto-tracking via `.trackIdentifier()` and `.trackDeepLinks()`
 - URLSession traffic for API-call tracking
 - encrypted export via share sheet, HTTP upload, and MCP
 - SDK status/config inspection from a settings tab

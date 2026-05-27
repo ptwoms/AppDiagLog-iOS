@@ -75,7 +75,7 @@ final class ScreenTrackerBridge: @unchecked Sendable {
         lock.unlock()
         guard armed, let runtime else { return }
 
-        guard let screen = screenView(from: viewController, mode: runtime.config.autoTrack.screenViews) else {
+        guard let screen = screenView(from: viewController, config: runtime.config.autoTrack.screenViews) else {
             return
         }
 
@@ -98,23 +98,29 @@ final class ScreenTrackerBridge: @unchecked Sendable {
 
     private func screenView(
         from viewController: UIViewController,
-        mode: ScreenTrackingMode?
+        config: ScreenTrackingConfig?
     ) -> (name: String, kind: String)? {
-        guard let mode else { return nil }
+        guard let config else { return nil }
 
-        switch mode {
-        case .automatic(let config):
-            let name = String(describing: type(of: viewController))
-            guard config.shouldTrack(controllerName: name) else { return nil }
-            return (name, "automatic")
+        let controllerName = String(describing: type(of: viewController))
+        guard !config.shouldSkipController(name: controllerName) else { return nil }
 
-        case .accessibilityIdentifier(let config):
-            guard let identifier = viewController.view.accessibilityIdentifier else {
+        let screenName: String
+        let kind: String
+        switch config.uikitNaming {
+        case .className:
+            screenName = controllerName
+            kind = "automatic"
+        case .accessibilityIdentifier:
+            guard let id = viewController.view.accessibilityIdentifier, !id.isEmpty else {
                 return nil
             }
-            guard config.shouldTrack(identifier: identifier) else { return nil }
-            return (identifier, "accessibility_identifier")
+            screenName = id
+            kind = "accessibility_identifier"
         }
+
+        guard config.shouldTrack(screenName: screenName) else { return nil }
+        return (screenName, kind)
     }
 
     private static func swizzleViewDidAppear() {
@@ -143,14 +149,19 @@ extension UIViewController {
 
 #if canImport(SwiftUI)
 public extension View {
-    /// Records a `screen_view` event when this view appears. Deduplicates: no event emitted
-    /// if the screen name is unchanged (prevents duplicate logs from SwiftUI redraws that
-    /// re-fire `onAppear` without actual navigation). Preferred for pure-SwiftUI apps
-    /// because SwiftUI bodies don't correspond 1:1 to UIViewControllers.
+    /// Records a SwiftUI `screen_view` using an explicit screen name.
+    ///
+    /// The name passes through the same `ScreenTrackingConfig` filters as UIKit
+    /// controller names. Deduplicates: no event emitted if the name is unchanged.
     func trackScreen(_ name: String) -> some View {
         self.onAppear {
-            AppDiagLog.trackScreen(name)
+            AppDiagLog.trackScreen(name, kind: "swiftui")
         }
+    }
+
+    @available(*, deprecated, renamed: "trackScreen(_:)")
+    func trackIdentifier(_ identifier: String) -> some View {
+        trackScreen(identifier)
     }
 }
 #endif

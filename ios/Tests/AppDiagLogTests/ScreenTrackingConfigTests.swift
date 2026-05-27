@@ -3,54 +3,106 @@ import XCTest
 
 final class ScreenTrackingConfigTests: XCTestCase {
 
-    func testDefaultFilterSkipsFrameworkAndSwiftUIContainerControllers() {
-        let config = AutomaticScreenTrackConfig()
+    // MARK: - UIKit controller pre-filter
 
-        XCTAssertFalse(config.shouldTrack(controllerName: "UINavigationController"))
-        XCTAssertFalse(config.shouldTrack(controllerName: "UITabBarController"))
-        XCTAssertFalse(config.shouldTrack(controllerName: "TabHostingController"))
-        XCTAssertFalse(config.shouldTrack(controllerName: "NavigationStackHostingController<AnyView>"))
-        XCTAssertFalse(config.shouldTrack(controllerName: "UIHostingController<SettingsView>"))
-        XCTAssertFalse(config.shouldTrack(controllerName: "_UIRemoteKeyboardViewController"))
+    func testDefaultConfigSkipsFrameworkAndSwiftUIContainerControllers() {
+        let config = ScreenTrackingConfig()
+
+        XCTAssertTrue(config.shouldSkipController(name: "UINavigationController"))
+        XCTAssertTrue(config.shouldSkipController(name: "UITabBarController"))
+        XCTAssertTrue(config.shouldSkipController(name: "TabHostingController"))
+        XCTAssertTrue(config.shouldSkipController(name: "NavigationStackHostingController<AnyView>"))
+        XCTAssertTrue(config.shouldSkipController(name: "UIHostingController<SettingsView>"))
+        XCTAssertTrue(config.shouldSkipController(name: "_UIRemoteKeyboardViewController"))
     }
 
-    func testDefaultFilterAllowsAppControllersIncludingCustomHostingWrappers() {
-        let config = AutomaticScreenTrackConfig()
+    func testDefaultConfigAllowsAppControllers() {
+        let config = ScreenTrackingConfig()
 
-        XCTAssertTrue(config.shouldTrack(controllerName: "CheckoutViewController"))
-        XCTAssertTrue(config.shouldTrack(controllerName: "AutoTrackingDetailHostingController"))
+        XCTAssertFalse(config.shouldSkipController(name: "CheckoutViewController"))
+        XCTAssertFalse(config.shouldSkipController(name: "AutoTrackingDetailHostingController"))
     }
 
-    func testAllowListRestrictsTrackedControllerNames() {
-        let config = AutomaticScreenTrackConfig(
-            allowedControllerNamePrefixes: ["Checkout", "Settings"]
-        )
+    // MARK: - Shared screen name filter
 
-        XCTAssertTrue(config.shouldTrack(controllerName: "CheckoutViewController"))
-        XCTAssertTrue(config.shouldTrack(controllerName: "SettingsViewController"))
-        XCTAssertFalse(config.shouldTrack(controllerName: "ProfileViewController"))
+    func testSharedFilterRejectsEmptyName() {
+        let config = ScreenTrackingConfig()
+
+        XCTAssertFalse(config.shouldTrack(screenName: ""))
     }
 
-    func testCustomPredicateCanDenyOtherwiseAllowedControllerName() {
-        let config = AutomaticScreenTrackConfig { name in
+    func testSharedFilterAllowsAnyNameByDefault() {
+        let config = ScreenTrackingConfig()
+
+        XCTAssertTrue(config.shouldTrack(screenName: "CheckoutViewController"))
+        XCTAssertTrue(config.shouldTrack(screenName: "screen.checkout"))
+        XCTAssertTrue(config.shouldTrack(screenName: "RootTabView"))
+    }
+
+    func testSharedFilterIgnoresScreenPrefixes() {
+        let config = ScreenTrackingConfig(ignoredScreenPrefixes: ["Debug", "Internal."])
+
+        XCTAssertFalse(config.shouldTrack(screenName: "DebugOverlayView"))
+        XCTAssertFalse(config.shouldTrack(screenName: "Internal.SettingsView"))
+        XCTAssertTrue(config.shouldTrack(screenName: "CheckoutViewController"))
+    }
+
+    func testSharedFilterRestrictsToAllowedPrefixes() {
+        let config = ScreenTrackingConfig(allowedScreenPrefixes: ["Checkout", "Settings"])
+
+        XCTAssertTrue(config.shouldTrack(screenName: "CheckoutViewController"))
+        XCTAssertTrue(config.shouldTrack(screenName: "SettingsViewController"))
+        XCTAssertFalse(config.shouldTrack(screenName: "ProfileViewController"))
+    }
+
+    func testSharedFilterCustomPredicateCanDeny() {
+        let config = ScreenTrackingConfig { name in
             name != "DebugOverlayViewController"
         }
 
-        XCTAssertTrue(config.shouldTrack(controllerName: "CheckoutViewController"))
-        XCTAssertFalse(config.shouldTrack(controllerName: "DebugOverlayViewController"))
+        XCTAssertTrue(config.shouldTrack(screenName: "CheckoutViewController"))
+        XCTAssertFalse(config.shouldTrack(screenName: "DebugOverlayViewController"))
     }
 
-    func testAccessibilityIdentifierTrackingRequiresNonEmptyIdentifier() {
-        let config = AccessibilityIdentifierScreenTrackConfig()
+    func testAllowedPrefixesFilterAppliesToSwiftUIIdentifiers() {
+        let config = ScreenTrackingConfig(allowedScreenPrefixes: ["screen."])
 
-        XCTAssertTrue(config.shouldTrack(identifier: "checkout_screen"))
-        XCTAssertFalse(config.shouldTrack(identifier: ""))
+        XCTAssertTrue(config.shouldTrack(screenName: "screen.checkout"))
+        XCTAssertFalse(config.shouldTrack(screenName: "Checkout"))
+        XCTAssertFalse(config.shouldTrack(screenName: ""))
     }
 
-    func testAccessibilityIdentifierTrackingCanRequirePrefix() {
-        let config = AccessibilityIdentifierScreenTrackConfig(requiredPrefix: "screen.")
+    // MARK: - UIKit and SwiftUI use the same filter
 
-        XCTAssertTrue(config.shouldTrack(identifier: "screen.checkout"))
-        XCTAssertFalse(config.shouldTrack(identifier: "checkout_button"))
+    func testUIKitAndSwiftUIScreenNamesShareSameFilter() {
+        let config = ScreenTrackingConfig(
+            ignoredScreenPrefixes: ["Debug"],
+            allowedScreenPrefixes: ["Checkout", "screen."]
+        )
+
+        // UIKit-derived name
+        XCTAssertTrue(config.shouldTrack(screenName: "CheckoutViewController"))
+        XCTAssertFalse(config.shouldTrack(screenName: "ProfileViewController"))
+
+        // SwiftUI identifier — same rules
+        XCTAssertTrue(config.shouldTrack(screenName: "screen.checkout"))
+        XCTAssertFalse(config.shouldTrack(screenName: "HomeView"))
+
+        // Both reject debug prefix
+        XCTAssertFalse(config.shouldTrack(screenName: "DebugViewController"))
+        XCTAssertFalse(config.shouldTrack(screenName: "DebugView"))
+    }
+
+    // MARK: - UIKit naming strategy
+
+    func testClassNameIsDefaultNamingStrategy() {
+        let config = ScreenTrackingConfig()
+        XCTAssertEqual(config.uikitNaming, .className)
+    }
+
+    func testAccessibilityIdentifierNamingCanBeSelected() {
+        let config = ScreenTrackingConfig(uikitNaming: .accessibilityIdentifier)
+        XCTAssertEqual(config.uikitNaming, .accessibilityIdentifier)
     }
 }
+

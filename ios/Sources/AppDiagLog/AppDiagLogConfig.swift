@@ -112,9 +112,12 @@ public struct PermissionTrackConfig: Sendable {
 
 public struct AutoTrackConfig: Sendable {
     public let appLifecycle: Bool
-    /// Controls automatic screen-view tracking. Pass `nil` to disable automatic
-    /// tracking while keeping explicit SwiftUI `.trackScreen(_:)` calls available.
-    public let screenViews: ScreenTrackingMode?
+    /// Controls screen-view tracking. Pass `nil` to disable both automatic UIKit
+    /// screen tracking and SwiftUI `.trackScreen(_:)` calls.
+    ///
+    /// Both UIKit and SwiftUI screen names are filtered through the same
+    /// `ScreenTrackingConfig` rules.
+    public let screenViews: ScreenTrackingConfig?
     public let taps: Bool
     public let apiCalls: Bool
     public let crashes: Bool
@@ -131,7 +134,7 @@ public struct AutoTrackConfig: Sendable {
 
     public init(
         appLifecycle: Bool = true,
-        screenViews: ScreenTrackingMode? = .automatic(),
+        screenViews: ScreenTrackingConfig? = ScreenTrackingConfig(),
         taps: Bool = true,
         apiCalls: Bool = true,
         crashes: Bool = true,
@@ -164,24 +167,46 @@ public struct AutoTrackConfig: Sendable {
     }
 }
 
-/// Selects how automatic `screen_view` events are named.
-public enum ScreenTrackingMode: Sendable {
-    /// Infer screens from visible controller names after applying framework/container
-    /// filters. This is useful for quick setup and UIKit-heavy apps.
-    case automatic(AutomaticScreenTrackConfig = AutomaticScreenTrackConfig())
-    /// Log only views/controllers that provide an accessibility identifier accepted by
-    /// the supplied config. Missing identifiers produce no screen event.
-    case accessibilityIdentifier(AccessibilityIdentifierScreenTrackConfig = AccessibilityIdentifierScreenTrackConfig())
-}
+/// Unified screen tracking configuration. Both UIKit (`viewDidAppear` swizzle)
+/// and SwiftUI (`.trackScreen` modifier) filter through the same shared rules.
+public struct ScreenTrackingConfig: Sendable {
 
-/// Controls which view-controller class names are allowed to emit automatic
-/// inferred `screen_view` events from the UIKit `viewDidAppear(_:)` swizzle.
-///
-/// This is intentionally based on class-name strings rather than UIKit types so the
-/// core configuration remains portable across package build targets. For pure SwiftUI
-/// apps, prefer `AutoTrackConfig(screenViews: nil)` and annotate meaningful views
-/// with `.trackScreen("Checkout")`.
-public struct AutomaticScreenTrackConfig: Sendable {
+    // MARK: - Shared filtering (UIKit + SwiftUI)
+
+    /// Screen names matching any of these prefixes are silently ignored.
+    public let ignoredScreenPrefixes: [String]
+
+    /// When non-empty, only screen names matching at least one prefix are tracked.
+    /// An empty array means "allow all" (subject to `ignoredScreenPrefixes`).
+    public let allowedScreenPrefixes: [String]
+
+    /// Final predicate after prefix checks. Return `false` to suppress the event.
+    public let shouldTrackScreen: (@Sendable (String) -> Bool)?
+
+    // MARK: - UIKit infrastructure controller suppression
+
+    /// Exact UIKit controller class names to skip before naming.
+    /// Only applies to the `viewDidAppear` swizzle path.
+    public let ignoredControllerNames: Set<String>
+
+    /// UIKit controller class-name prefixes to skip before naming.
+    /// Only applies to the `viewDidAppear` swizzle path.
+    public let ignoredControllerNamePrefixes: [String]
+
+    // MARK: - UIKit naming strategy
+
+    /// How the UIKit swizzle derives a screen name from a UIViewController.
+    public let uikitNaming: UIKitScreenNaming
+
+    public enum UIKitScreenNaming: Sendable {
+        /// Use `String(describing: type(of: viewController))`.
+        case className
+        /// Use `viewController.view.accessibilityIdentifier`. Missing identifier = skip.
+        case accessibilityIdentifier
+    }
+
+    // MARK: - Defaults
+
     public static let defaultIgnoredControllerNames: Set<String> = [
         "UIAlertController",
         "UICompatibilityInputViewController",
@@ -201,75 +226,54 @@ public struct AutomaticScreenTrackConfig: Sendable {
         "UIHostingController<",
         "NavigationStackHostingController<",
         "PresentationHostingController<",
-        "TabHostingController<"
+        "TabHostingController<",
+        "UIKitTabBarController",
+        "UIKitNavigationController"
     ]
 
-    public let enabled: Bool
-    public let ignoredControllerNames: Set<String>
-    public let ignoredControllerNamePrefixes: [String]
-    public let allowedControllerNamePrefixes: [String]
-    public let shouldTrackControllerName: (@Sendable (String) -> Bool)?
-
     public init(
-        enabled: Bool = true,
-        ignoredControllerNames: Set<String> = AutomaticScreenTrackConfig.defaultIgnoredControllerNames,
-        ignoredControllerNamePrefixes: [String] = AutomaticScreenTrackConfig.defaultIgnoredControllerNamePrefixes,
-        allowedControllerNamePrefixes: [String] = [],
-        shouldTrackControllerName: (@Sendable (String) -> Bool)? = nil
+        ignoredScreenPrefixes: [String] = [],
+        allowedScreenPrefixes: [String] = [],
+        shouldTrackScreen: (@Sendable (String) -> Bool)? = nil,
+        ignoredControllerNames: Set<String> = ScreenTrackingConfig.defaultIgnoredControllerNames,
+        ignoredControllerNamePrefixes: [String] = ScreenTrackingConfig.defaultIgnoredControllerNamePrefixes,
+        uikitNaming: UIKitScreenNaming = .className
     ) {
-        self.enabled = enabled
+        self.ignoredScreenPrefixes = ignoredScreenPrefixes
+        self.allowedScreenPrefixes = allowedScreenPrefixes
+        self.shouldTrackScreen = shouldTrackScreen
         self.ignoredControllerNames = ignoredControllerNames
         self.ignoredControllerNamePrefixes = ignoredControllerNamePrefixes
-        self.allowedControllerNamePrefixes = allowedControllerNamePrefixes
-        self.shouldTrackControllerName = shouldTrackControllerName
+        self.uikitNaming = uikitNaming
     }
 
-    func shouldTrack(controllerName name: String) -> Bool {
-        guard enabled else { return false }
-        guard !ignoredControllerNames.contains(name) else { return false }
-        guard !ignoredControllerNamePrefixes.contains(where: { name.hasPrefix($0) }) else { return false }
+    /// Determines whether a screen name (from any source) should emit an event.
+    func shouldTrack(screenName name: String) -> Bool {
+        guard !name.isEmpty else { return false }
 
-        if !allowedControllerNamePrefixes.isEmpty {
-            guard allowedControllerNamePrefixes.contains(where: { name.hasPrefix($0) }) else {
+        if ignoredScreenPrefixes.contains(where: { name.hasPrefix($0) }) {
+            return false
+        }
+
+        if !allowedScreenPrefixes.isEmpty {
+            guard allowedScreenPrefixes.contains(where: { name.hasPrefix($0) }) else {
                 return false
             }
         }
 
-        if let shouldTrackControllerName {
-            return shouldTrackControllerName(name)
+        if let shouldTrackScreen {
+            return shouldTrackScreen(name)
         }
 
         return true
     }
-}
 
-/// Controls screen tracking by accessibility identifier.
-///
-/// Use a prefix such as `"screen."` when the app already uses accessibility
-/// identifiers for controls and test hooks, so element IDs are not mistaken for screens.
-public struct AccessibilityIdentifierScreenTrackConfig: Sendable {
-    public let requiredPrefix: String?
-    public let shouldTrackIdentifier: (@Sendable (String) -> Bool)?
-
-    public init(
-        requiredPrefix: String? = nil,
-        shouldTrackIdentifier: (@Sendable (String) -> Bool)? = nil
-    ) {
-        self.requiredPrefix = requiredPrefix
-        self.shouldTrackIdentifier = shouldTrackIdentifier
-    }
-
-    func shouldTrack(identifier: String) -> Bool {
-        guard !identifier.isEmpty else { return false }
-
-        if let requiredPrefix, !identifier.hasPrefix(requiredPrefix) {
-            return false
-        }
-
-        if let shouldTrackIdentifier {
-            return shouldTrackIdentifier(identifier)
-        }
-        return true
+    /// UIKit-only: checks if a controller class name is an infrastructure
+    /// container that should be skipped before screen name derivation.
+    func shouldSkipController(name: String) -> Bool {
+        if ignoredControllerNames.contains(name) { return true }
+        if ignoredControllerNamePrefixes.contains(where: { name.hasPrefix($0) }) { return true }
+        return false
     }
 }
 

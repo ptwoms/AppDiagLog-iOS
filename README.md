@@ -124,10 +124,11 @@ AppDiagLog.error("checkout_failure", ["code": "402"])
 let result = await AppDiagLog.export()
 ```
 
-Annotate SwiftUI views with `.trackScreen("Cart")` and `.trackDeepLinks()` to
+Annotate SwiftUI views with `.trackIdentifier("Cart")` and `.trackDeepLinks()` to
 get screen-view / deep-link tracking without relying on UIKit controller
-swizzling. For pure SwiftUI apps, set `AutoTrackConfig(screenViews: nil)` and
-use `.trackScreen(_:)` only on meaningful screens.
+swizzling. Use `.trackIdentifier(_:)` only on meaningful screens. Set
+`AutoTrackConfig(screenViews: nil)` to disable all screen-view tracking,
+including explicit SwiftUI `.trackIdentifier(_:)` calls.
 
 UIKit apps can keep automatic screen tracking and narrow the swizzle with
 `AutomaticScreenTrackConfig`:
@@ -152,6 +153,16 @@ AutoTrackConfig(
 
 ```swift
 view.accessibilityIdentifier = "screen.checkout"
+```
+
+For SwiftUI, pass the accepted identifier to `.trackIdentifier(_:)`; SwiftUI's own
+`.accessibilityIdentifier(...)` remains useful for UI tests, but the SDK cannot
+read it back from the view modifier chain:
+
+```swift
+CheckoutView()
+    .accessibilityIdentifier("screen.checkout")
+    .trackIdentifier("screen.checkout")
 ```
 
 ### 4. Upload & query

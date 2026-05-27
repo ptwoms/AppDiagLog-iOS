@@ -59,7 +59,7 @@ enum SampleConfiguration {
 
     static let autoTrack = AutoTrackConfig(
         appLifecycle: true,
-        screenViews: nil,
+        screenViews: ScreenTrackingConfig(),
         taps: true,
         apiCalls: true,
         crashes: true,
